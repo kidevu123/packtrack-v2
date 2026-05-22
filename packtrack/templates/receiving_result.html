@@ -37,7 +37,9 @@
             ({{ r.confidence }})
             {% if r.counted is not none %} · counted: {{ r.counted | int }}{% endif %}
           </p>
-          {% if r.luma_ok is not none %}
+          {% if r.luma_skipped %}
+            <p class="text-xs mt-1 text-stone-400">Luma: skipped — {{ r.luma_skipped }}</p>
+          {% elif r.luma_ok is not none %}
             <p class="text-xs mt-1 {{ 'text-emerald-600' if r.luma_ok else 'text-amber-600' }}">
               Luma: {{ 'pushed' if r.luma_ok else ('failed — ' + (r.luma_err or 'unknown error')) }}
             </p>

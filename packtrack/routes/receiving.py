@@ -241,9 +241,12 @@ async def submit_receiving(
         session.add(box)
         session.flush()
 
-        # Luma push.
+        # Luma push — skip entirely when material_code is missing.
         luma_ok = luma_err = luma_resp = None
-        if settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET:
+        luma_skipped: str | None = None
+        if luma_status == LumaPushStatus.NOT_READY:
+            luma_skipped = "no material code — assign one in Inventory"
+        elif settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET:
             photo_urls = [build_photo_url(photo_fname)] if photo_fname else []
             luma_ok, luma_err, luma_resp = push_luma_receipt(
                 box, mirror.purchaseorder_number or zoho_po_id, photo_urls
@@ -264,6 +267,7 @@ async def submit_receiving(
             "confidence": confidence.value,
             "luma_ok": luma_ok,
             "luma_err": luma_err,
+            "luma_skipped": luma_skipped,
             "ok": True,
         })
 
