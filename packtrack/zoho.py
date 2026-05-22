@@ -256,8 +256,7 @@ def sync_items(session: Session) -> tuple[int, int]:
 
 
 _TERMINAL_STATUSES = {
-    "cancelled", "void", "closed", "received", "billed", "paid",
-    "fulfilled", "complete", "completed",
+    "cancelled", "void",
 }
 
 
