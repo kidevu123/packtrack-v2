@@ -62,11 +62,11 @@
             padding:14px 20px;margin-bottom:16px;">
   <div>
     <p style="font-size:13px;font-weight:600;color:#92400e;">
-      {{ failed_boxes_count }} receipt{{ 's' if failed_boxes_count != 1 else '' }}
-      waiting to sync to Luma
+      {{ failed_boxes_count }} item{{ 's' if failed_boxes_count != 1 else '' }}
+      on this PO waiting to sync to Luma
     </p>
     <p style="font-size:12px;color:#b45309;margin-top:2px;">
-      Material codes have been resolved — retry the push without re-recording.
+      Only this PO. No other POs will be touched.
     </p>
   </div>
   <form method="post" action="/receive/{{ mirror.zoho_purchaseorder_id }}/retry-luma">

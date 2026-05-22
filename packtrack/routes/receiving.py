@@ -127,9 +127,8 @@ def receiving_form(
             "item": item,
         })
 
-    # Count existing BoxReceipts that failed or couldn't push to Luma, so the
-    # template can show a "Sync to Luma" banner without the operator having to
-    # re-enter quantities.
+    # Count distinct items with FAILED/NOT_READY BoxReceipts so the banner
+    # shows the number of items to push (not raw row count from repeat submissions).
     luma_configured = bool(settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET)
     failed_boxes_count = 0
     if luma_configured:
@@ -137,7 +136,7 @@ def receiving_form(
             select(PurchaseOrder).where(PurchaseOrder.zoho_po_id == zoho_po_id)
         ).first()
         if po_row is not None:
-            failed_boxes_count = len(session.exec(
+            all_failed = session.exec(
                 select(BoxReceipt).where(
                     BoxReceipt.purchase_order_id == po_row.id,
                     or_(
@@ -145,7 +144,9 @@ def receiving_form(
                         BoxReceipt.luma_push_status == LumaPushStatus.NOT_READY,
                     ),
                 )
-            ).all())
+            ).all()
+            # Count distinct items (deduplication mirrors what retry-luma does).
+            failed_boxes_count = len({b.item_id for b in all_failed})
 
     from packtrack.main import templates
     return templates.TemplateResponse(
@@ -396,10 +397,27 @@ def retry_luma_push(
         # Nothing to retry.
         return RedirectResponse(url=f"/receive/{zoho_po_id}", status_code=303)
 
+    # Deduplicate: when multiple failed attempts exist for the same item
+    # (e.g. the operator clicked "Record receipt" several times), only push
+    # the most-recent BoxReceipt per item_id and silently retire the older
+    # ones as DUPLICATE so Luma never receives inflated quantities.
+    latest_per_item: dict[int, BoxReceipt] = {}
+    for box in boxes:
+        existing = latest_per_item.get(box.item_id)
+        if existing is None or box.created_at > existing.created_at:
+            latest_per_item[box.item_id] = box
+
+    now = datetime.utcnow()
+    for box in boxes:
+        if box is not latest_per_item.get(box.item_id):
+            box.luma_push_status = LumaPushStatus.DUPLICATE
+            box.updated_at = now
+            session.add(box)
+
     retry_results: list[dict] = []
     po_number = mirror.purchaseorder_number or zoho_po_id
 
-    for box in boxes:
+    for box in latest_per_item.values():
         item = session.get(Item, box.item_id)
 
         # Resolve / generate material_code on the Item if the snapshot is empty.
@@ -407,7 +425,7 @@ def retry_luma_push(
             mc = ensure_material_code(session, item)
             if mc:
                 box.material_code = mc
-                box.updated_at = datetime.utcnow()
+                box.updated_at = now
                 session.add(box)
                 session.flush()
 
@@ -433,7 +451,6 @@ def retry_luma_push(
         luma_ok, luma_err, luma_resp = push_luma_receipt(
             box, po_number, photo_urls, received_by=received_by,
         )
-        now = datetime.utcnow()
         if luma_ok:
             box.luma_push_status = LumaPushStatus.PUSHED
             box.luma_pushed_at = now

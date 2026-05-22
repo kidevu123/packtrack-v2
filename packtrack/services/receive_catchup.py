@@ -151,31 +151,14 @@ def catchup_zoho_receives(session: Session) -> dict:
 
             summary["receipts_created"] += 1
             logger.info(
-                "catchup: BoxReceipt %s — item=%s po=%s delta=%g",
+                "catchup: BoxReceipt %s — item=%s po=%s delta=%g (Luma push deferred to manual per-PO sync)",
                 box.packtrack_receipt_id, item.name, mirror.purchaseorder_number, delta,
             )
-
-            # Push to Luma (best-effort).
-            if (
-                settings.LUMA_RECEIPT_WEBHOOK_URL
-                and settings.LUMA_PACKTRACK_SECRET
-                and luma_status == LumaPushStatus.PENDING
-            ):
-                po_number = mirror.purchaseorder_number or mirror.zoho_purchaseorder_id
-                luma_ok, luma_err, luma_resp = push_luma_receipt(box, po_number, [])
-                if luma_ok:
-                    box.luma_push_status = LumaPushStatus.PUSHED
-                    box.luma_pushed_at = datetime.utcnow()
-                    box.luma_response = luma_resp
-                    summary["luma_pushed"] += 1
-                else:
-                    box.luma_push_status = LumaPushStatus.FAILED
-                    box.luma_response = {"error": luma_err}
-                    summary["errors"] += 1
-                    logger.warning(
-                        "catchup: Luma push failed for %s: %s",
-                        box.packtrack_receipt_id, luma_err,
-                    )
+            # NOTE: Luma push is intentionally NOT done here.
+            # The background sync records receipts in PackTrack so the data is
+            # captured, but pushing to Luma is a manual, per-PO action triggered
+            # by the operator from the receiving form.  This prevents the sync
+            # job from flooding Luma with every historical PO at once.
 
         # Flip SHIPPED → RECEIVED if every line item with qty_received > 0
         # is now fully covered by BoxReceipts.
