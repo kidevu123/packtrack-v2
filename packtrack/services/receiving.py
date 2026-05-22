@@ -171,6 +171,8 @@ def push_luma_receipt(
     box: BoxReceipt,
     po_number: str,
     photo_urls: list[str],
+    *,
+    received_by: str = "",
     dry_run: bool = False,
 ) -> tuple[bool, str | None, dict | None]:
     """POST one BoxReceipt to the Luma webhook.
@@ -195,7 +197,7 @@ def push_luma_receipt(
         "counted_quantity": int(box.counted_quantity) if box.counted_quantity is not None else None,
         "unit_of_measure": box.unit_of_measure,
         "received_at": box.received_at.isoformat() + "Z",
-        "received_by": None,
+        "received_by": received_by or None,
         **({"payload": {"photo_urls": photo_urls}} if photo_urls else {}),
     }
     headers = {

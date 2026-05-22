@@ -200,6 +200,20 @@ async def submit_receiving(
             results.append({"name": zid, "ok": False, "error": "Item not found in PackTrack."})
             continue
 
+        # Auto-assign material_code from sku_code when missing so Luma gets a
+        # stable, non-null code.  Only applies when sku_code is present and not
+        # already claimed by another item (prevents accidental duplicates).
+        if not item.material_code and item.sku_code:
+            collision = session.exec(
+                select(Item)
+                .where(Item.material_code == item.sku_code)
+                .where(Item.id != item.id)
+            ).first()
+            if collision is None:
+                item.material_code = item.sku_code
+                session.add(item)
+                session.flush()
+
         # Adopt PO once.
         if po is None:
             po = adopt_zoho_po(session, mirror, user)
@@ -241,15 +255,13 @@ async def submit_receiving(
         session.add(box)
         session.flush()
 
-        # Luma push — skip entirely when material_code is missing.
+        # Luma push.
         luma_ok = luma_err = luma_resp = None
-        luma_skipped: str | None = None
-        if luma_status == LumaPushStatus.NOT_READY:
-            luma_skipped = "no material code — assign one in Inventory"
-        elif settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET:
+        if settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET:
             photo_urls = [build_photo_url(photo_fname)] if photo_fname else []
             luma_ok, luma_err, luma_resp = push_luma_receipt(
-                box, mirror.purchaseorder_number or zoho_po_id, photo_urls
+                box, mirror.purchaseorder_number or zoho_po_id, photo_urls,
+                received_by=user.name,
             )
             if luma_ok:
                 box.luma_push_status = LumaPushStatus.PUSHED
@@ -267,7 +279,6 @@ async def submit_receiving(
             "confidence": confidence.value,
             "luma_ok": luma_ok,
             "luma_err": luma_err,
-            "luma_skipped": luma_skipped,
             "ok": True,
         })
 
