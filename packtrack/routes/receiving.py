@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from packtrack.config import settings
@@ -30,6 +31,7 @@ from packtrack.services.receiving import (
     adopt_zoho_po,
     build_photo_url,
     create_zoho_receive,
+    ensure_material_code,
     push_luma_receipt,
 )
 
@@ -125,6 +127,26 @@ def receiving_form(
             "item": item,
         })
 
+    # Count existing BoxReceipts that failed or couldn't push to Luma, so the
+    # template can show a "Sync to Luma" banner without the operator having to
+    # re-enter quantities.
+    luma_configured = bool(settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET)
+    failed_boxes_count = 0
+    if luma_configured:
+        po_row = session.exec(
+            select(PurchaseOrder).where(PurchaseOrder.zoho_po_id == zoho_po_id)
+        ).first()
+        if po_row is not None:
+            failed_boxes_count = len(session.exec(
+                select(BoxReceipt).where(
+                    BoxReceipt.purchase_order_id == po_row.id,
+                    or_(
+                        BoxReceipt.luma_push_status == LumaPushStatus.FAILED,
+                        BoxReceipt.luma_push_status == LumaPushStatus.NOT_READY,
+                    ),
+                )
+            ).all())
+
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "receiving_form.html",
@@ -132,7 +154,8 @@ def receiving_form(
             "user": user,
             "mirror": mirror,
             "line_items": line_items,
-            "luma_configured": bool(settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET),
+            "luma_configured": luma_configured,
+            "failed_boxes_count": failed_boxes_count,
         },
     )
 
@@ -200,19 +223,10 @@ async def submit_receiving(
             results.append({"name": zid, "ok": False, "error": "Item not found in PackTrack."})
             continue
 
-        # Auto-assign material_code from sku_code when missing so Luma gets a
-        # stable, non-null code.  Only applies when sku_code is present and not
-        # already claimed by another item (prevents accidental duplicates).
-        if not item.material_code and item.sku_code:
-            collision = session.exec(
-                select(Item)
-                .where(Item.material_code == item.sku_code)
-                .where(Item.id != item.id)
-            ).first()
-            if collision is None:
-                item.material_code = item.sku_code
-                session.add(item)
-                session.flush()
+        # Ensure item has a material_code before snapshotting into BoxReceipt.
+        # ensure_material_code() tries sku_code first, then auto-generates
+        # PT-{id:05d} so Luma always receives a stable, non-empty code.
+        ensure_material_code(session, item)
 
         # Adopt PO once.
         if po is None:
@@ -323,6 +337,136 @@ async def submit_receiving(
             "results": results,
             "zoho_ok": zoho_ok,
             "zoho_err": zoho_err,
+            "is_retry": False,
+        },
+        status_code=200,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Retry Luma push — for already-recorded BoxReceipts that failed or were
+# NOT_READY because the item had no material_code at receive time.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{zoho_po_id}/retry-luma")
+def retry_luma_push(
+    zoho_po_id: str,
+    request: Request,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Re-push all FAILED / NOT_READY BoxReceipts on this PO to Luma.
+
+    For NOT_READY boxes the item's material_code is resolved (or auto-
+    generated) first so that every box gets a stable code before the push.
+    No new BoxReceipts or Zoho receives are created — this is a Luma-only
+    sync operation on existing recorded data.
+    """
+    if user.role not in (Role.RECEIVING, Role.OWNER):
+        raise HTTPException(status_code=403)
+
+    mirror = session.exec(
+        select(ZohoMirror).where(ZohoMirror.zoho_purchaseorder_id == zoho_po_id)
+    ).first()
+    if mirror is None:
+        raise HTTPException(status_code=404, detail="PO not found in mirror.")
+
+    po = session.exec(
+        select(PurchaseOrder).where(PurchaseOrder.zoho_po_id == zoho_po_id)
+    ).first()
+    if po is None:
+        # No receipts have ever been recorded for this PO — send back to form.
+        return RedirectResponse(url=f"/receive/{zoho_po_id}", status_code=303)
+
+    if not (settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET):
+        raise HTTPException(status_code=400, detail="Luma is not configured on this server.")
+
+    boxes = session.exec(
+        select(BoxReceipt).where(
+            BoxReceipt.purchase_order_id == po.id,
+            or_(
+                BoxReceipt.luma_push_status == LumaPushStatus.FAILED,
+                BoxReceipt.luma_push_status == LumaPushStatus.NOT_READY,
+            ),
+        )
+    ).all()
+
+    if not boxes:
+        # Nothing to retry.
+        return RedirectResponse(url=f"/receive/{zoho_po_id}", status_code=303)
+
+    retry_results: list[dict] = []
+    po_number = mirror.purchaseorder_number or zoho_po_id
+
+    for box in boxes:
+        item = session.get(Item, box.item_id)
+
+        # Resolve / generate material_code on the Item if the snapshot is empty.
+        if not box.material_code and item:
+            mc = ensure_material_code(session, item)
+            if mc:
+                box.material_code = mc
+                box.updated_at = datetime.utcnow()
+                session.add(box)
+                session.flush()
+
+        if not box.material_code:
+            retry_results.append({
+                "name": box.material_name,
+                "ok": True,
+                "declared": box.declared_quantity,
+                "accepted": box.accepted_quantity,
+                "confidence": box.confidence.value,
+                "luma_ok": False,
+                "luma_err": "Could not resolve a material code for this item.",
+            })
+            continue
+
+        photo_urls = [build_photo_url(p) for p in (box.photo_paths or []) if p]
+        received_by = ""
+        if box.received_by_user_id:
+            usr = session.get(User, box.received_by_user_id)
+            if usr:
+                received_by = usr.name
+
+        luma_ok, luma_err, luma_resp = push_luma_receipt(
+            box, po_number, photo_urls, received_by=received_by,
+        )
+        now = datetime.utcnow()
+        if luma_ok:
+            box.luma_push_status = LumaPushStatus.PUSHED
+            box.luma_pushed_at = now
+            box.luma_response = luma_resp
+        else:
+            box.luma_push_status = LumaPushStatus.FAILED
+            box.luma_response = {"error": luma_err}
+        box.updated_at = now
+        session.add(box)
+
+        retry_results.append({
+            "name": box.material_name,
+            "ok": True,
+            "declared": box.declared_quantity,
+            "accepted": box.accepted_quantity,
+            "confidence": box.confidence.value,
+            "luma_ok": luma_ok,
+            "luma_err": luma_err,
+        })
+
+    session.commit()
+
+    from packtrack.main import templates
+    return templates.TemplateResponse(
+        request, "receiving_result.html",
+        {
+            "user": user,
+            "mirror": mirror,
+            "po": po,
+            "results": retry_results,
+            "zoho_ok": True,   # no Zoho receive being created
+            "zoho_err": None,
+            "is_retry": True,
         },
         status_code=200,
     )

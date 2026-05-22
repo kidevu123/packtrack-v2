@@ -9,6 +9,7 @@ Three responsibilities:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime
 
 import httpx
@@ -28,6 +29,54 @@ from packtrack.models import (
 )
 
 logger = logging.getLogger("packtrack.receiving")
+
+
+# ---------------------------------------------------------------------------
+# 0. Material-code resolution helper
+# ---------------------------------------------------------------------------
+
+
+def ensure_material_code(session: Session, item: Item) -> str | None:
+    """Guarantee ``item.material_code`` is set — generating one if needed.
+
+    Priority order:
+    1. Already has ``material_code`` → return it, no DB write.
+    2. Has ``sku_code`` not already claimed → promote ``sku_code``.
+    3. Neither → generate deterministic ``PT-{id:05d}`` (stable per item).
+
+    Writes back to the Item row and flushes so the caller's BoxReceipt
+    snapshot picks up the new value.  Caller must commit.
+    """
+    if item.material_code:
+        return item.material_code
+
+    # Try sku_code first — preferred because it matches Zoho identity.
+    if item.sku_code:
+        collision = session.exec(
+            select(Item)
+            .where(Item.material_code == item.sku_code)
+            .where(Item.id != item.id)
+        ).first()
+        if collision is None:
+            item.material_code = item.sku_code
+            session.add(item)
+            session.flush()
+            logger.info("material_code: item %s assigned from sku_code → %s", item.id, item.material_code)
+            return item.material_code
+        # sku_code already claimed by another item — fall through.
+
+    # Auto-generate: PT-{id:05d} is deterministic and stable per item id.
+    generated = f"PT-{item.id:05d}"
+    collision = session.exec(
+        select(Item)
+        .where(Item.material_code == generated)
+        .where(Item.id != item.id)
+    ).first()
+    item.material_code = generated if collision is None else f"PT-{uuid.uuid4().hex[:8].upper()}"
+    session.add(item)
+    session.flush()
+    logger.info("material_code: item %s auto-generated → %s", item.id, item.material_code)
+    return item.material_code
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ from packtrack.models import (
     ZohoMirror,
 )
 from packtrack.services.box_receipt import compute_luma_readiness
-from packtrack.services.receiving import adopt_zoho_po, push_luma_receipt
+from packtrack.services.receiving import adopt_zoho_po, ensure_material_code, push_luma_receipt
 
 logger = logging.getLogger("packtrack.receive_catchup")
 
@@ -110,6 +110,10 @@ def catchup_zoho_receives(session: Session) -> dict:
                 select(BoxReceipt).where(BoxReceipt.box_number == box_number)
             ).first():
                 continue
+            # Ensure item has a material_code before snapshotting — auto-
+            # generates PT-{id:05d} when neither material_code nor sku_code
+            # is set so every catch-up receipt reaches Luma with a stable code.
+            ensure_material_code(session, item)
             luma_status = compute_luma_readiness(item.material_code)
             now = datetime.utcnow()
 

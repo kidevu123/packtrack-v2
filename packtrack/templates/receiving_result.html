@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Received · PackTrack{% endblock %}
+{% block title %}{% if is_retry %}Luma Sync · {% endif %}Received · PackTrack{% endblock %}
 {% block container_class %}max-w-3xl{% endblock %}
 {% block content %}
 <header class="mb-6">
@@ -8,7 +8,9 @@
     <span class="text-stone-300">/</span>
     <a href="/receive" class="hover:text-stone-900">Receiving</a>
   </div>
-  <h1 class="text-2xl font-semibold">Receipt recorded</h1>
+  <h1 class="text-2xl font-semibold">
+    {% if is_retry %}Luma sync retry{% else %}Receipt recorded{% endif %}
+  </h1>
   <p class="text-sm text-stone-500 mt-1">
     {{ mirror.purchaseorder_number or mirror.zoho_purchaseorder_id }}
     {% if po %} · <a href="/po/{{ po.id }}" class="text-stone-700 hover:underline">View PO →</a>{% endif %}
@@ -35,13 +37,11 @@
           <p class="text-sm text-stone-500 mt-0.5">
             Accepted: <span class="font-medium text-stone-700">{{ r.accepted | int }}</span>
             ({{ r.confidence }})
-            {% if r.counted is not none %} · counted: {{ r.counted | int }}{% endif %}
+            {% if r.counted is defined and r.counted is not none %} · counted: {{ r.counted | int }}{% endif %}
           </p>
-          {% if r.luma_skipped %}
-            <p class="text-xs mt-1 text-stone-400">Luma: skipped — {{ r.luma_skipped }}</p>
-          {% elif r.luma_ok is not none %}
+          {% if r.luma_ok is not none %}
             <p class="text-xs mt-1 {{ 'text-emerald-600' if r.luma_ok else 'text-amber-600' }}">
-              Luma: {{ 'pushed' if r.luma_ok else ('failed — ' + (r.luma_err or 'unknown error')) }}
+              Luma: {{ 'pushed ✓' if r.luma_ok else ('failed — ' + (r.luma_err or 'unknown error')) }}
             </p>
           {% endif %}
         {% else %}
@@ -52,7 +52,34 @@
   {% endfor %}
 </div>
 
-{# Zoho status #}
+{# Retry Luma button — shown when any line failed to push #}
+{% set luma_has_failures = namespace(v=false) %}
+{% for r in results %}
+  {% if r.ok and not r.luma_ok %}{% set luma_has_failures.v = true %}{% endif %}
+{% endfor %}
+{% if luma_has_failures.v %}
+<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;
+            padding:14px 20px;margin-bottom:16px;display:flex;
+            align-items:center;justify-content:space-between;gap:12px;">
+  <div>
+    <p style="font-size:13px;font-weight:600;color:#92400e;">Some items failed to push to Luma</p>
+    <p style="font-size:12px;color:#b45309;margin-top:2px;">
+      The receipt is saved in PackTrack. Retry the Luma sync without re-recording.
+    </p>
+  </div>
+  <form method="post" action="/receive/{{ mirror.zoho_purchaseorder_id }}/retry-luma">
+    <button type="submit"
+            style="flex-shrink:0;background:#d97706;color:white;padding:8px 18px;
+                   font-size:13px;font-weight:500;border-radius:8px;border:none;
+                   cursor:pointer;white-space:nowrap;">
+      Retry Luma push →
+    </button>
+  </form>
+</div>
+{% endif %}
+
+{# Zoho status — only shown on initial receive, not on retry #}
+{% if not is_retry %}
 <div class="rounded-xl border px-5 py-4 bg-white mb-6
             {{ 'border-emerald-200' if zoho_ok else 'border-amber-200' }}">
   <div class="flex items-center gap-3">
@@ -73,12 +100,15 @@
     {% endif %}
   </div>
 </div>
+{% endif %}
 
 <div class="flex gap-3">
+  {% if not is_retry %}
   <a href="/receive/{{ mirror.zoho_purchaseorder_id }}"
      class="flex-1 rounded-xl border border-stone-200 bg-white text-center py-3 text-sm font-medium text-stone-700 hover:border-stone-400">
     Receive more on this PO
   </a>
+  {% endif %}
   <a href="/receive"
      class="flex-1 rounded-xl bg-stone-900 text-white text-center py-3 text-sm font-medium hover:bg-stone-800">
     Back to receiving
