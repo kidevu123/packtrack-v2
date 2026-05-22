@@ -134,8 +134,8 @@
                        name="qty_{{ li.zoho_item_id }}"
                        placeholder="{{ [li.ordered - li.already_received, 0] | max | int }}"
                        min="0" step="any"
-                       value="{{ ([li.ordered - li.already_received, 0] | max) | int if li.already_received < li.ordered else 0 }}"
-                       class="recv-input{{ ' done-bg' if fully_done else '' }}">
+                       value="{{ ([li.ordered - li.already_received, 0] | max) | int if li.already_received < li.ordered else li.already_received | int }}"
+                       class="recv-input">
               </td>
 
               {# Counted qty input #}
