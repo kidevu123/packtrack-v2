@@ -83,12 +83,17 @@ def sync_page(
 ):
     _owner_only(user)
     runs = session.exec(
-        select(SyncRun).order_by(SyncRun.started_at.desc()).limit(50)
+        select(SyncRun).order_by(SyncRun.started_at.desc()).limit(10)
     ).all()
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "admin/sync.html",
-        {"user": user, "runs": runs, "zoho_configured": settings.zoho_configured},
+        {
+            "user": user,
+            "runs": runs,
+            "zoho_configured": settings.zoho_configured,
+            "gateway_configured": settings.gateway_configured,
+        },
     )
 
 
