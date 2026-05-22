@@ -272,3 +272,96 @@ def build_photo_url(filename: str) -> str:
     """Public URL for a photo stored under uploads/receiving/."""
     base = (settings.APP_BASE_URL or "").rstrip("/")
     return f"{base}/uploads/receiving/{filename}"
+
+
+# ---------------------------------------------------------------------------
+# 4. Luma material pre-registration
+# ---------------------------------------------------------------------------
+
+
+def _infer_luma_kind(item_name: str) -> str:
+    """Derive Luma ``packaging_material.kind`` from the item name.
+
+    Luma enum values (packaging_material_kind): BLISTER_CARD, DISPLAY, CASE,
+    LABEL, INSERT, BOTTLE, CAP, INDUCTION_SEAL, HEAT_SEAL_FILM, BLISTER_FOIL,
+    DESICCANT, COTTON, OTHER.
+    """
+    n = (item_name or "").lower()
+    if "blister" in n:
+        return "BLISTER_CARD"
+    if "display" in n:
+        return "DISPLAY"
+    if "case" in n:
+        return "CASE"
+    if "label" in n:
+        return "LABEL"
+    if "insert" in n:
+        return "INSERT"
+    if "bottle" in n:
+        return "BOTTLE"
+    if "cap" in n:
+        return "CAP"
+    if "seal" in n:
+        return "INDUCTION_SEAL"
+    return "OTHER"
+
+
+def register_material_with_luma(item: Item) -> tuple[bool, str | None]:
+    """Pre-register ``item.material_code`` with Luma so receipt pushes succeed.
+
+    Calls ``POST {luma_base}/api/integrations/packtrack/items`` which:
+      - finds or creates a ``packaging_materials`` row  (sku = material_code)
+      - finds or creates an ``external_item_mappings`` row
+    Returns ``(ok, error_message)``.
+
+    Idempotent — safe to call on every receive.  A 200 means already
+    registered; a 201 means freshly created.  Both are success.
+    Callers should log failures but NOT block the receipt push — if the
+    item was registered previously (e.g. by a supervisor via the Luma UI)
+    the push will still succeed even if this call fails.
+    """
+    if not settings.LUMA_RECEIPT_WEBHOOK_URL or not settings.LUMA_PACKTRACK_SECRET:
+        return False, "Luma not configured."
+    if not item.material_code:
+        return False, "Item has no material_code to register."
+
+    # Derive the items endpoint from the webhook URL.
+    # e.g. .../api/integrations/packtrack/receipts
+    #   → .../api/integrations/packtrack/items
+    items_url = settings.LUMA_RECEIPT_WEBHOOK_URL.rsplit("/", 1)[0] + "/items"
+
+    payload = {
+        "material_code": item.material_code,
+        "material_name": (item.name or item.material_code)[:240],
+        "kind": _infer_luma_kind(item.name or ""),
+        "unit_of_measure": (item.unit or "each"),
+        **({"zoho_item_id": item.zoho_item_id} if item.zoho_item_id else {}),
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "x-packtrack-secret": settings.LUMA_PACKTRACK_SECRET,
+    }
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            r = client.post(items_url, json=payload, headers=headers)
+        body = (
+            r.json()
+            if r.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        if r.status_code >= 400:
+            logger.warning(
+                "Luma item registration failed for %s: HTTP %s %s",
+                item.material_code, r.status_code, body.get("error", r.text[:200]),
+            )
+            return False, f"HTTP {r.status_code}: {body.get('error', r.text[:200])}"
+        logger.info(
+            "Luma item %s %s (luma_id=%s)",
+            item.material_code,
+            "registered" if body.get("created") else "already mapped",
+            body.get("luma_material_id"),
+        )
+        return True, None
+    except Exception:
+        logger.exception("Luma item registration error for %s", item.material_code)
+        return False, "Registration request failed."

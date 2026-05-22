@@ -33,6 +33,7 @@ from packtrack.services.receiving import (
     create_zoho_receive,
     ensure_material_code,
     push_luma_receipt,
+    register_material_with_luma,
 )
 
 router = APIRouter(prefix="/receive")
@@ -270,9 +271,10 @@ async def submit_receiving(
         session.add(box)
         session.flush()
 
-        # Luma push.
+        # Luma push — pre-register the material first so the mapping exists.
         luma_ok = luma_err = luma_resp = None
         if settings.LUMA_RECEIPT_WEBHOOK_URL and settings.LUMA_PACKTRACK_SECRET:
+            register_material_with_luma(item)   # best-effort; failures logged
             photo_urls = [build_photo_url(photo_fname)] if photo_fname else []
             luma_ok, luma_err, luma_resp = push_luma_receipt(
                 box, mirror.purchaseorder_number or zoho_po_id, photo_urls,
@@ -440,6 +442,10 @@ def retry_luma_push(
                 "luma_err": "Could not resolve a material code for this item.",
             })
             continue
+
+        # Pre-register material with Luma so the mapping exists before pushing.
+        if item:
+            register_material_with_luma(item)   # best-effort; failures logged
 
         photo_urls = [build_photo_url(p) for p in (box.photo_paths or []) if p]
         received_by = ""
