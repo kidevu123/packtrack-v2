@@ -1,0 +1,18 @@
+# PackTrack v2 — LAN reverse proxy on port 80.
+# Add a real hostname + ACME later by replacing the :80 site block with a
+# domain name; Caddy will provision a Let's Encrypt cert automatically.
+
+:80 {
+    log {
+        output file /var/log/caddy/packtrack.log
+    }
+    encode zstd gzip
+
+    # Static assets are served by uvicorn (mounted at /static). One less
+    # moving part than splitting them between Caddy and the app, and avoids
+    # cross-uid permission issues against the hardened systemd unit.
+    reverse_proxy 127.0.0.1:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

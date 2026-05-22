@@ -1,0 +1,336 @@
+{% extends "base.html" %}
+{% block title %}{{ po.po_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-4xl{% endblock %}
+{% block content %}
+{% set status_colors = {
+  'draft': 'bg-stone-100 text-stone-700',
+  'design_review': 'bg-amber-100 text-amber-800',
+  'design_rejected': 'bg-red-100 text-red-800',
+  'design_approved': 'bg-blue-100 text-blue-800',
+  'pi_received': 'bg-amber-100 text-amber-800',
+  'pi_approved': 'bg-blue-100 text-blue-800',
+  'production': 'bg-indigo-100 text-indigo-800',
+  'shipped': 'bg-cyan-100 text-cyan-800',
+  'received': 'bg-emerald-100 text-emerald-800',
+  'cancelled': 'bg-stone-100 text-stone-500',
+} %}
+{% set urgency_dot = {
+  'normal':'',
+  'high':'bg-amber-400',
+  'critical':'bg-red-500'
+}[po.urgency.value] %}
+
+<header class="mb-6">
+  <div class="flex items-center gap-3 text-sm text-stone-500 mb-3">
+    <a href="/" class="hover:text-stone-900">Home</a>
+    <span class="text-stone-300">/</span>
+    <a href="/po" class="hover:text-stone-900">Pipeline</a>
+  </div>
+  <div class="flex items-start justify-between gap-4 flex-wrap">
+    <div class="min-w-0">
+      <div class="flex items-center gap-2">
+        <h1 class="text-2xl font-semibold">{{ po.po_number }}</h1>
+        {% if urgency_dot %}<span class="size-2.5 rounded-full {{ urgency_dot }}" title="{{ po.urgency.value }}"></span>{% endif %}
+        {% if po.is_placeholder_number %}<span class="text-[11px] text-amber-600">awaiting Zoho number</span>{% endif %}
+      </div>
+      <p class="text-sm text-stone-500 mt-1">
+        Created {{ po.created_at.strftime('%b %d, %Y') }}
+        {% if po.lines %}
+          · <span class="text-stone-700 font-medium">{{ po.lines|length }} line{{ '' if po.lines|length == 1 else 's' }}</span>
+          ({{ po.item_summary|length }} distinct item{{ '' if po.item_summary|length == 1 else 's' }})
+        {% endif %}
+        {% if po.total %} · <span class="text-stone-900 font-semibold tabular-nums">{{ po.total|money(po.currency) }}</span>{% endif %}
+      </p>
+    </div>
+    <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium {{ status_colors[po.status.value] or 'bg-stone-100' }}">
+      {{ po.status_label }}
+    </span>
+  </div>
+</header>
+
+{# Primary action — the "next obvious step" for this user #}
+{% if primary %}
+  <form method="post" action="/po/{{ po.id }}/move" class="mb-6">
+    <input type="hidden" name="target" value="{{ primary.value }}" />
+    <button class="w-full rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
+      {{ primary_label }}
+    </button>
+  </form>
+{% endif %}
+
+{# Per-item rollup — answers "what's actually on this PO" without forcing
+   the operator to read every row. Shown only when the PO has 2+ distinct
+   items; for a single-item PO the table tells the whole story. #}
+{% set summary = po.item_summary %}
+{% if summary|length >= 2 %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+    <div class="flex items-baseline justify-between mb-3">
+      <h2 class="text-sm font-medium text-stone-700">Mix</h2>
+      <span class="text-xs text-stone-500">{{ summary|length }} distinct item{{ '' if summary|length == 1 else 's' }}</span>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {% for s in summary %}
+        <div class="flex items-center gap-3 p-2 rounded-lg bg-stone-50">
+          {% if s.image_path %}
+            <img src="/uploads/items/{{ s.image_path }}" alt="" class="size-9 rounded-md object-cover bg-stone-100 shrink-0" />
+          {% else %}
+            <span class="size-9 rounded-md bg-stone-100 grid place-items-center text-[11px] font-medium text-stone-500 shrink-0">{{ s.name|initials }}</span>
+          {% endif %}
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium truncate">{{ s.name }}</p>
+            <p class="text-[11px] text-stone-500 truncate">
+              {{ s.total_qty|qty }} {{ s.unit }}
+              {% if s.line_count > 1 %} · across {{ s.line_count }} lines{% endif %}
+            </p>
+          </div>
+          <span class="shrink-0 text-sm tabular-nums font-medium">{{ s.total_value|money(po.currency) }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+
+{# Line items — sorted so duplicate items cluster, with line_notes
+   prominent when the same item appears twice. #}
+<section class="bg-white border border-stone-200 rounded-xl overflow-hidden mb-4">
+  <div class="px-4 py-3 border-b border-stone-100 flex items-center justify-between gap-3">
+    <h2 class="text-sm font-medium text-stone-700">Line items</h2>
+    <div class="flex items-center gap-3 text-xs">
+      {% if user.role.value == 'owner' %}
+        <form method="post" action="/po/{{ po.id }}/duplicate" class="inline">
+          <button class="text-stone-500 hover:text-stone-900">Duplicate as draft →</button>
+        </form>
+        <span class="text-stone-300">·</span>
+      {% endif %}
+      <a href="/po/{{ po.id }}/print" target="_blank" class="text-stone-500 hover:text-stone-900">
+        Print / PDF →
+      </a>
+    </div>
+  </div>
+  <table class="w-full text-sm">
+    <thead class="bg-stone-50">
+      <tr class="text-[11px] uppercase tracking-wider text-stone-500">
+        <th class="text-left font-medium px-4 py-2">Item</th>
+        <th class="text-right font-medium px-4 py-2">Qty</th>
+        <th class="text-right font-medium px-4 py-2">Unit price</th>
+        <th class="text-right font-medium px-4 py-2">Line total</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-stone-100">
+      {# Track when we cross to a new item so duplicate-item lines can be
+         visually distinguished by a tiny "Line N" annotation. #}
+      {% set ns = namespace(prev=None, idx=0) %}
+      {% for line in po.lines_sorted %}
+        {% if line.item.id != ns.prev %}{% set ns.idx = 1 %}{% else %}{% set ns.idx = ns.idx + 1 %}{% endif %}
+        {% set ns.prev = line.item.id %}
+        {% set is_dup = po.item_summary | selectattr('item.id', 'equalto', line.item.id) | map(attribute='line_count') | first > 1 %}
+        <tr>
+          <td class="px-4 py-2.5 align-top">
+            <div class="flex items-center gap-3">
+              {% if line.item.image_path %}
+                <img src="/uploads/items/{{ line.item.image_path }}" alt="" class="size-10 rounded-md object-cover bg-stone-100 shrink-0" />
+              {% else %}
+                <span class="size-10 rounded-md bg-stone-100 grid place-items-center text-[11px] font-medium text-stone-500 shrink-0">{{ line.item.name|initials }}</span>
+              {% endif %}
+              <div class="min-w-0">
+                <p class="text-stone-900">
+                  {{ line.item.name }}
+                  {% if is_dup %}<span class="ml-1 text-[10px] uppercase tracking-wider text-stone-400">· split {{ ns.idx }}</span>{% endif %}
+                </p>
+                {% if line.line_notes %}
+                  <p class="text-xs {{ 'text-stone-700 font-medium' if is_dup else 'text-stone-500' }}">{{ line.line_notes }}</p>
+                {% endif %}
+                {% if line.target_arrival %}
+                  <p class="text-[11px] text-stone-400">arrival {{ line.target_arrival.strftime('%Y-%m-%d') }}</p>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+          <td class="px-4 py-2.5 align-top text-right tabular-nums">{{ line.quantity|qty }} {{ line.item.unit }}</td>
+          <td class="px-4 py-2.5 align-top text-right tabular-nums text-stone-600">
+            {% if line.unit_price %}{{ line.unit_price|money(po.currency) }}{% else %}<span class="text-stone-300">—</span>{% endif %}
+          </td>
+          <td class="px-4 py-2.5 align-top text-right tabular-nums">
+            {% if line.line_total %}{{ line.line_total|money(po.currency) }}{% else %}<span class="text-stone-300">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot class="bg-stone-50">
+      <tr>
+        <td colspan="3" class="px-4 py-2.5 text-right text-xs uppercase tracking-wider text-stone-500">Total</td>
+        <td class="px-4 py-2.5 text-right font-semibold tabular-nums">
+          {% if po.total %}{{ po.total|money(po.currency) }}{% else %}<span class="text-stone-300">—</span>{% endif %}
+        </td>
+      </tr>
+    </tfoot>
+  </table>
+  {% if po.notes %}
+    <div class="px-4 py-3 border-t border-stone-100">
+      <p class="text-sm text-stone-600 whitespace-pre-line">{{ po.notes }}</p>
+    </div>
+  {% endif %}
+</section>
+
+{# Upload PI (agent, when status is design_approved) #}
+{% if po.status.value == 'design_approved' and user.role.value in ['agent', 'owner'] %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+    <h2 class="text-sm font-medium text-stone-500 mb-3">Upload Proforma Invoice</h2>
+    <form method="post" action="/po/{{ po.id }}/upload-pi" enctype="multipart/form-data" class="space-y-3">
+      <input type="file" name="file" required class="block w-full text-sm" />
+      <textarea name="notes" placeholder="Notes (optional)" rows="2" class="block w-full text-sm rounded-lg border-stone-300"></textarea>
+      <button class="rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium">Upload PI</button>
+    </form>
+  </section>
+{% endif %}
+
+{# Upload artwork (design) #}
+{% if po.status.value in ['design_review','design_approved','pi_received','pi_approved'] and user.role.value in ['design', 'owner'] %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+    <h2 class="text-sm font-medium text-stone-500 mb-3">Add artwork</h2>
+    <form method="post" action="/po/{{ po.id }}/upload-artwork" enctype="multipart/form-data" class="space-y-3">
+      <input type="file" name="file" class="block w-full text-sm" />
+      <input type="url" name="external_url" placeholder="…or paste a Drive / Figma link" class="block w-full text-sm rounded-lg border-stone-300" />
+      <textarea name="notes" placeholder="Notes (optional)" rows="2" class="block w-full text-sm rounded-lg border-stone-300"></textarea>
+      <button class="rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium">Save artwork</button>
+    </form>
+  </section>
+{% endif %}
+
+{# Ship form (owner / agent) #}
+{% if po.status.value in ['pi_approved','production'] and user.role.value in ['owner','agent'] %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+    <h2 class="text-sm font-medium text-stone-500 mb-3">Mark as shipped</h2>
+    <form method="post" action="/po/{{ po.id }}/ship" class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <label class="block">
+          <span class="text-xs text-stone-500">Express qty</span>
+          <input name="express_qty" type="number" step="0.01" min="0" value="0" class="mt-1 w-full rounded-lg border-stone-300" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-stone-500">Express ETA</span>
+          <input name="express_eta" type="date" class="mt-1 w-full rounded-lg border-stone-300" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-stone-500">Sea qty</span>
+          <input name="sea_qty" type="number" step="0.01" min="0" value="0" class="mt-1 w-full rounded-lg border-stone-300" />
+        </label>
+        <label class="block">
+          <span class="text-xs text-stone-500">Sea ETA</span>
+          <input name="sea_eta" type="date" class="mt-1 w-full rounded-lg border-stone-300" />
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <input name="carrier" placeholder="Carrier" class="rounded-lg border-stone-300 text-sm" />
+        <input name="tracking" placeholder="Tracking #" class="rounded-lg border-stone-300 text-sm" />
+      </div>
+      <button class="rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium">Mark shipped</button>
+    </form>
+  </section>
+{% endif %}
+
+{# Receive shipments #}
+{% if po.shipments and user.role.value in ['receiving','owner'] %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4" id="shipments">
+    <h2 class="text-sm font-medium text-stone-500 mb-3">Shipments</h2>
+    <ul class="space-y-3">
+      {% for sh in po.shipments %}
+        <li class="border border-stone-100 rounded-lg p-3 text-sm">
+          <div class="flex justify-between">
+            <span class="font-medium">{{ sh.method.value|title }} · {{ sh.quantity|qty }}</span>
+            <span class="text-stone-500">{{ sh.status.value }}</span>
+          </div>
+          <p class="text-stone-500 text-xs mt-1">
+            {% if sh.shipped_date %}Shipped {{ sh.shipped_date }}{% endif %}
+            {% if sh.eta %} · ETA {{ sh.eta }}{% endif %}
+            {% if sh.carrier %} · {{ sh.carrier }}{% endif %}
+            {% if sh.tracking_number %} · {{ sh.tracking_number }}{% endif %}
+          </p>
+          {% if sh.status.value == 'in_transit' %}
+            <form method="post" action="/po/{{ po.id }}/receive/{{ sh.id }}" class="mt-2 flex gap-2">
+              <input name="actual_qty" type="number" step="0.01" min="0" value="{{ sh.quantity }}" class="w-28 rounded-lg border-stone-300 text-sm" />
+              <input name="discrepancy_notes" placeholder="Discrepancy notes" class="flex-1 rounded-lg border-stone-300 text-sm" />
+              <button class="rounded-lg bg-stone-900 text-white px-3 text-sm">Receive</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+{# Attachments #}
+{% if po.attachments %}
+  <section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+    <h2 class="text-sm font-medium text-stone-500 mb-3">Attachments</h2>
+    <ul class="divide-y divide-stone-100">
+      {% for a in po.attachments|sort(attribute='created_at', reverse=True) %}
+        <li class="py-2 flex justify-between text-sm">
+          <span class="truncate">
+            <span class="text-xs uppercase text-stone-400 mr-2">{{ a.kind.value }} v{{ a.version }}</span>
+            {{ a.filename }}
+          </span>
+          {% if a.external_url %}
+            <a href="{{ a.external_url }}" target="_blank" rel="noopener" class="text-blue-600">open link →</a>
+          {% elif a.file_path %}
+            <a href="/po/{{ po.id }}/file/{{ a.id }}" class="text-blue-600">download</a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+{# Comment #}
+<section class="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+  <form method="post" action="/po/{{ po.id }}/comment" class="flex gap-2">
+    <input name="text" placeholder="Add a note…" class="flex-1 rounded-lg border-stone-300 text-sm" />
+    <button class="rounded-lg bg-stone-900 text-white px-3 text-sm">Post</button>
+  </form>
+</section>
+
+{# Secondary actions — flat row of buttons. Destructive (Cancel) sits last
+   on its own row, styled differently. No "More actions" disclosure: every
+   legal move should be visible without a click. #}
+{% set non_destructive = secondary | rejectattr('destructive') | list %}
+{% set destructive = secondary | selectattr('destructive') | list %}
+{% if non_destructive or destructive %}
+  <div class="mb-4 space-y-2">
+    {% if non_destructive %}
+      <div class="flex flex-wrap gap-2">
+        {% for s in non_destructive %}
+          <form method="post" action="/po/{{ po.id }}/move">
+            <input type="hidden" name="target" value="{{ s.target.value }}" />
+            <button class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm hover:bg-stone-50">
+              {{ s.label }}
+            </button>
+          </form>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% for s in destructive %}
+      <form method="post" action="/po/{{ po.id }}/move"
+            onsubmit="return confirm('Cancel {{ po.po_number }}? This cannot be undone.')">
+        <input type="hidden" name="target" value="{{ s.target.value }}" />
+        <button class="text-xs text-red-600 hover:text-red-800 hover:underline">{{ s.label }}</button>
+      </form>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{# Timeline #}
+<section class="bg-white border border-stone-200 rounded-xl p-4">
+  <h2 class="text-sm font-medium text-stone-500 mb-3">Timeline</h2>
+  <ol class="space-y-3">
+    {% for ev in events %}
+      <li class="flex gap-3 text-sm">
+        <span class="size-1.5 mt-2 rounded-full bg-stone-300 shrink-0"></span>
+        <div class="min-w-0">
+          <p class="text-stone-700">{{ ev.message }}</p>
+          <p class="text-xs text-stone-400">{{ ev.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ ev.kind }}</p>
+        </div>
+      </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}

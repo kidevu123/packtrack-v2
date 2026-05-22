@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PackTrack backup nightly
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=packtrack-backup.service
+
+[Install]
+WantedBy=timers.target

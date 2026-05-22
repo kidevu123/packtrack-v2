@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% block title %}Pipeline · PackTrack{% endblock %}
+{% block container_class %}max-w-[1600px]{% endblock %}
+
+{% block head %}
+<script src="/static/sortable.min.js" defer></script>
+<style>
+  /* Drag visuals */
+  .po-card {
+    transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  }
+  .po-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px -4px rgba(28,25,23,0.10);
+  }
+  .po-card.sortable-ghost { opacity: 0.30; }
+  .po-card.sortable-chosen { box-shadow: 0 8px 22px -8px rgba(28,25,23,0.20); }
+  .po-column.drag-over { background-color: rgb(231 229 228 / 0.7); }
+  /* Mobile: stack columns vertically. Desktop: horizontal scroll, equal widths. */
+</style>
+{% endblock %}
+
+{% block content %}
+{# Stage metadata: icon (heroicons-style mini SVG path), accent color, numbered position. #}
+{% set stage_meta = {
+  'draft':       {'n': 1, 'tone': 'stone',   'path': 'M5 4a2 2 0 012-2h6a2 2 0 012 2v12l-5-3-5 3V4z'},
+  'design':      {'n': 2, 'tone': 'amber',   'path': 'M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z M14.5 9a.5.5 0 00-.5.5v2a2.5 2.5 0 01-2.5 2.5h-2.086l-.707.707A1 1 0 008.914 16H15a2 2 0 002-2v-3a2 2 0 00-2-2h-.5z'},
+  'awaiting_pi': {'n': 3, 'tone': 'blue',    'path': 'M9 2a1 1 0 000 2h2a1 1 0 100-2H9z M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z'},
+  'pi_review':   {'n': 4, 'tone': 'amber',   'path': 'M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0117.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z'},
+  'production':  {'n': 5, 'tone': 'indigo',  'path': 'M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM16 3a1 1 0 011 1v7.268a2 2 0 010 3.464V16a1 1 0 11-2 0v-1.268a2 2 0 010-3.464V4a1 1 0 011-1z'},
+  'shipped':     {'n': 6, 'tone': 'cyan',    'path': 'M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05A2.5 2.5 0 0115.95 16H17a1 1 0 001-1v-5a1 1 0 00-.293-.707l-2-2A1 1 0 0015 7h-1z'},
+  'received':    {'n': 7, 'tone': 'emerald', 'path': 'M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z'},
+} %}
+
+{% set tone_classes = {
+  'stone':   {'header': 'text-stone-700',   'bg': 'bg-stone-100',    'count': 'bg-stone-200 text-stone-700'},
+  'amber':   {'header': 'text-amber-800',   'bg': 'bg-amber-50',     'count': 'bg-amber-100 text-amber-800'},
+  'blue':    {'header': 'text-blue-800',    'bg': 'bg-blue-50',      'count': 'bg-blue-100 text-blue-800'},
+  'indigo':  {'header': 'text-indigo-800',  'bg': 'bg-indigo-50',    'count': 'bg-indigo-100 text-indigo-800'},
+  'cyan':    {'header': 'text-cyan-800',    'bg': 'bg-cyan-50',      'count': 'bg-cyan-100 text-cyan-800'},
+  'emerald': {'header': 'text-emerald-800', 'bg': 'bg-emerald-50',   'count': 'bg-emerald-100 text-emerald-800'},
+} %}
+
+{% set any_filter = filter_stale or filter_urgency or filter_mine %}
+
+<div class="flex items-end justify-between gap-4 mb-4 flex-wrap">
+  <div>
+    <a href="/" class="text-sm text-stone-500 hover:text-stone-900">← Home</a>
+    <h1 class="text-2xl font-semibold mt-1">Pipeline</h1>
+  </div>
+  {% if user.role.value == 'owner' %}
+    <a href="/po/new" class="rounded-lg bg-stone-900 text-white px-3 py-1.5 text-sm font-medium hover:bg-stone-800">+ New PO</a>
+  {% endif %}
+</div>
+
+{# Filter chips. Each chip is a stand-alone link so the URL is shareable. #}
+{% macro chip(label, href, active) %}
+  <a href="{{ href }}" class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium border transition
+            {{ 'bg-stone-900 text-white border-stone-900' if active else 'bg-white text-stone-600 border-stone-300 hover:border-stone-400' }}">
+    {{ label }}
+  </a>
+{% endmacro %}
+<div class="mb-5 flex items-center gap-2 flex-wrap">
+  {{ chip('All', '/po', not any_filter) }}
+  {{ chip('Stale only', '/po?stale=1' + ('&mine=1' if filter_mine else '') + ('&urgency=' + filter_urgency if filter_urgency else ''), filter_stale) }}
+  {{ chip('High +', '/po?urgency=high' + ('&stale=1' if filter_stale else '') + ('&mine=1' if filter_mine else ''), filter_urgency == 'high') }}
+  {{ chip('Critical', '/po?urgency=critical' + ('&stale=1' if filter_stale else '') + ('&mine=1' if filter_mine else ''), filter_urgency == 'critical') }}
+  {{ chip('Mine', '/po?mine=1' + ('&stale=1' if filter_stale else '') + ('&urgency=' + filter_urgency if filter_urgency else ''), filter_mine) }}
+  {% if any_filter %}
+    <span class="ml-1 text-xs text-stone-400">{{ visible_count }} match{{ '' if visible_count == 1 else 'es' }}</span>
+    <a href="/po" class="ml-auto text-xs text-stone-500 hover:text-stone-900">Clear</a>
+  {% endif %}
+</div>
+
+{# ---------------- Board ---------------- #}
+<div class="flex flex-col gap-4 lg:flex-row lg:overflow-x-auto lg:pb-2 lg:-mx-4 lg:px-4">
+  {% for col in pipeline %}
+    {% set meta = stage_meta[col.key] %}
+    {% set tone = tone_classes[meta.tone] %}
+    <section id="col-{{ col.key }}"
+             class="flex-1 lg:basis-0 lg:min-w-[260px] {{ tone.bg }} rounded-xl p-3 flex flex-col">
+      <header class="flex items-center justify-between mb-3 px-1">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-[10px] font-mono text-stone-400 shrink-0">{{ '%02d'|format(meta.n) }}</span>
+          <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 {{ tone.header }} shrink-0"><path fill-rule="evenodd" d="{{ meta.path }}" clip-rule="evenodd" /></svg>
+          <span class="text-xs font-semibold uppercase tracking-wider {{ tone.header }} truncate">{{ col.label }}</span>
+        </div>
+        <span class="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 text-[11px] font-medium rounded-full {{ tone.count }}">{{ col.count }}</span>
+      </header>
+
+      <ul data-column="{{ col.key }}" class="po-column space-y-2 min-h-[60px]">
+        {% set visible_cards = col.cards[:15] if col.key == 'received' else col.cards %}
+        {% for c in visible_cards %}
+          {% set urgency_dot = {
+            'normal':'',
+            'high':'bg-amber-400',
+            'critical':'bg-red-500'
+          }[c.po.urgency.value] %}
+          {% set is_stale = c.is_stale %}
+          {% set card_border = 'border-emerald-200' if col.key == 'received' else ('border-amber-400 ring-1 ring-amber-300/60' if is_stale else 'border-stone-200') %}
+          <li class="po-card group bg-white rounded-lg border {{ card_border }} px-3 py-2.5 {{ 'cursor-default' if col.key == 'received' else 'cursor-grab active:cursor-grabbing' }} select-none"
+              data-po-id="{{ c.po.id }}">
+            <div class="flex items-start justify-between gap-2 mb-1">
+              <a href="/po/{{ c.po.id }}" class="block flex-1 min-w-0" onclick="event.stopPropagation()">
+                {# whitespace-nowrap: never truncate the PO identifier; let the column scroll horizontally on the rare case it overflows #}
+                <p class="text-sm font-medium text-stone-900 whitespace-nowrap overflow-hidden text-ellipsis">{{ c.po.po_number }}</p>
+              </a>
+              <div class="flex items-center gap-1 shrink-0">
+                {% if urgency_dot %}<span class="size-2 mt-1.5 rounded-full {{ urgency_dot }}" title="{{ c.po.urgency.value }}"></span>{% endif %}
+              </div>
+            </div>
+            {% set summary = c.po.item_summary %}
+            {% set distinct_count = summary|length %}
+            <a href="/po/{{ c.po.id }}" class="flex items-center gap-2 text-xs text-stone-600 min-w-0" onclick="event.stopPropagation()">
+              {# Avatar pile — up to 3 distinct item thumbnails, overlapped.
+                 With 1 item: just the thumbnail. 4+: pile + "+N" badge. #}
+              {% set pile = summary[:3] %}
+              <div class="flex shrink-0">
+                {% for s in pile %}
+                  <span class="{% if not loop.first %}-ml-1.5{% endif %} ring-2 ring-white rounded-md overflow-hidden">
+                  {% if s.image_path %}
+                    <img src="/uploads/items/{{ s.image_path }}" alt="" class="size-7 object-cover bg-stone-100 block" />
+                  {% else %}
+                    <span class="size-7 bg-stone-100 grid place-items-center text-[10px] font-medium text-stone-500">{{ s.name|initials }}</span>
+                  {% endif %}
+                  </span>
+                {% endfor %}
+                {% if distinct_count > 3 %}
+                  <span class="-ml-1.5 ring-2 ring-white rounded-md size-7 bg-stone-200 text-stone-700 grid place-items-center text-[10px] font-medium">+{{ distinct_count - 3 }}</span>
+                {% endif %}
+              </div>
+              <span class="truncate">
+                {% if distinct_count == 1 %}{{ summary[0].name }}{% else %}{{ distinct_count }} items{% endif %}
+              </span>
+            </a>
+            <div class="mt-2 flex items-center justify-between gap-2 text-[11px]">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="{{ 'text-amber-700 font-medium' if is_stale else 'text-stone-400' }}">{{ c.days_in_stage }}d</span>
+                {% if c.po.total %}
+                  <span class="text-stone-300">·</span>
+                  <span class="text-stone-700 tabular-nums font-medium">{{ c.po.total|money(c.po.currency) }}</span>
+                {% endif %}
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                {% if is_stale %}
+                  <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 px-1.5 py-0.5 text-[10px] font-medium">
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="size-2.5"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 101.06-1.06l-2.78-2.78V5z" clip-rule="evenodd"/></svg>
+                    stale
+                  </span>
+                {% endif %}
+              </div>
+            </div>
+          </li>
+        {% endfor %}
+        {% if col.key == 'received' and col.count > 15 %}
+          <li class="text-center text-xs text-stone-400 py-1">+ {{ col.count - 15 }} more — see Closed section below</li>
+        {% endif %}
+      </ul>
+
+      {# In-column "Add a PO" affordance — owner-only, only meaningful in the
+         Draft column where new POs naturally start. #}
+      {% if col.key == 'draft' and user.role.value == 'owner' %}
+        <a href="/po/new" class="mt-2 block rounded-lg border border-dashed border-stone-300 hover:border-stone-400 hover:bg-white px-3 py-2 text-center text-xs text-stone-500 hover:text-stone-700 transition">
+          + Add a PO
+        </a>
+      {% endif %}
+    </section>
+  {% endfor %}
+</div>
+
+{# ---------------- Closed (lazy section, at bottom) ---------------- #}
+<section class="mt-8 pt-6 border-t border-stone-200">
+  {% if not show_closed %}
+    <a href="?show_closed=1" class="text-sm text-stone-500 hover:text-stone-900">Show cancelled POs →</a>
+  {% else %}
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-medium text-stone-700">Cancelled</h2>
+      <a href="?show_closed=0" class="text-xs text-stone-500 hover:text-stone-900">Hide</a>
+    </div>
+    {% if closed %}
+      <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
+        {% for po in closed %}
+          <li>
+            <a href="/po/{{ po.id }}" class="flex items-center justify-between gap-4 px-4 py-2.5 hover:bg-stone-50">
+              <div class="min-w-0">
+                <p class="text-sm font-medium truncate">{{ po.po_number }}</p>
+                <p class="text-xs text-stone-500">{{ po.lines|length }} item(s) · {{ po.updated_at.strftime('%Y-%m-%d') }}</p>
+              </div>
+              <span class="text-xs text-stone-400 shrink-0">{{ po.status_label }}</span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-sm text-stone-500">No cancelled POs.</p>
+    {% endif %}
+  {% endif %}
+</section>
+
+{# ---------------- Toast ---------------- #}
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 text-white text-sm rounded-lg px-4 py-2 shadow-lg opacity-0 pointer-events-none transition-opacity duration-200"></div>
+
+<script>
+(function() {
+  const toast = document.getElementById('toast');
+  let toastTimer = null;
+  function showToast(msg, kind) {
+    toast.textContent = msg;
+    toast.style.backgroundColor = kind === 'error' ? '#b91c1c' : '#1c1917';
+    toast.style.opacity = '1';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 2400);
+  }
+
+  document.querySelectorAll('.po-column').forEach(col => {
+    const isReceived = col.dataset.column === 'received';
+    new Sortable(col, {
+      group: isReceived
+        ? { name: 'pipeline', pull: false, put: false }
+        : 'pipeline',
+      sort: !isReceived,
+      disabled: isReceived,
+      animation: 160,
+      ghostClass: 'sortable-ghost',
+      chosenClass: 'sortable-chosen',
+      onAdd: (evt) => evt.to.classList.remove('drag-over'),
+      onEnd: async (evt) => {
+        const card = evt.item;
+        const newCol = evt.to.dataset.column;
+        const oldCol = evt.from.dataset.column;
+        if (newCol === oldCol) return;
+        const poId = card.dataset.poId;
+        const fd = new FormData();
+        fd.append('column', newCol);
+        try {
+          const r = await fetch(`/po/${poId}/move`, {
+            method: 'POST',
+            headers: { 'HX-Request': 'true', 'Accept': 'application/json' },
+            body: fd,
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok || !data.ok) {
+            evt.from.insertBefore(card, evt.from.children[evt.oldIndex] || null);
+            showToast(data.error || 'Move not allowed', 'error');
+            return;
+          }
+          showToast('Moved.');
+          // Update column counts
+          [evt.from, evt.to].forEach(c => {
+            const count = c.querySelectorAll('.po-card').length;
+            const badge = c.parentElement.querySelector('header > span:last-child');
+            if (badge) badge.textContent = count;
+          });
+        } catch (err) {
+          evt.from.insertBefore(card, evt.from.children[evt.oldIndex] || null);
+          showToast('Network error', 'error');
+        }
+      },
+    });
+  });
+})();
+</script>
+{% endblock %}

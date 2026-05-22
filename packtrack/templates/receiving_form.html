@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Receive {{ mirror.purchaseorder_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-5xl{% endblock %}
+{% block content %}
+<style>
+  .recv-table { width: 100%; border-collapse: collapse; }
+  .recv-table th {
+    text-align: left; font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: #78716c; background: #fafaf9;
+    padding: 8px 10px; border-bottom: 1px solid #e7e5e4;
+  }
+  .recv-table th.num { text-align: right; }
+  .recv-table td { padding: 8px 10px; border-bottom: 1px solid #f5f5f4; vertical-align: middle; }
+  .recv-table tbody tr:last-child td { border-bottom: none; }
+  .recv-table tbody tr.done td { background: #fafaf9; }
+  .recv-input {
+    width: 100%; padding: 5px 8px; font-size: 13px; text-align: right;
+    border: 1px solid #d6d3d1; border-radius: 6px; background: white;
+    box-sizing: border-box;
+  }
+  .recv-input:focus { outline: none; border-color: #a8a29e; box-shadow: 0 0 0 2px #e7e5e4; }
+  .recv-input.done-bg { background: #f5f5f4; color: #a8a29e; }
+  .recv-input-text { text-align: left; }
+  .cam-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 6px; cursor: pointer;
+    border: 1px solid #d6d3d1; background: white; color: #a8a29e;
+    transition: border-color .15s, background .15s, color .15s;
+    margin: 0 auto;
+  }
+  .cam-btn:hover { border-color: #a8a29e; background: #fafaf9; }
+</style>
+
+<header class="mb-5">
+  <div class="flex items-center gap-2 text-sm text-stone-500 mb-2">
+    <a href="/" class="hover:text-stone-900">Home</a>
+    <span>/</span>
+    <a href="/receive" class="hover:text-stone-900">Receiving</a>
+    <span>/</span>
+    <span class="text-stone-700">{{ mirror.purchaseorder_number or mirror.zoho_purchaseorder_id }}</span>
+  </div>
+  <div class="flex items-center justify-between gap-4">
+    <div>
+      <h1 class="text-xl font-semibold">{{ mirror.purchaseorder_number or mirror.zoho_purchaseorder_id }}</h1>
+      <p class="text-sm text-stone-500 mt-0.5">
+        {{ mirror.vendor_name or '—' }}
+        {% if mirror.date %} &middot; {{ mirror.date }}{% endif %}
+        {% if mirror.total %} &middot; <span class="font-medium text-stone-700">${{ "%.2f" | format(mirror.total) }}</span>{% endif %}
+      </p>
+    </div>
+    <span style="white-space:nowrap;font-size:11px;font-weight:500;padding:2px 10px;border-radius:999px;"
+          class="{{ 'bg-emerald-100 text-emerald-700' if luma_configured else 'bg-amber-100 text-amber-700' }}">
+      {{ 'Luma connected' if luma_configured else 'Luma not configured' }}
+    </span>
+  </div>
+</header>
+
+{% if not line_items %}
+  <div class="rounded-xl border border-stone-200 bg-white p-10 text-center text-stone-400">
+    This PO has no line items in the mirror. Re-sync to refresh.
+  </div>
+{% else %}
+  <form method="post" action="/receive/{{ mirror.zoho_purchaseorder_id }}" enctype="multipart/form-data">
+
+    <div class="rounded-xl border border-stone-200 bg-white overflow-hidden mb-4">
+      <table class="recv-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th class="num" style="width:80px;">Ordered</th>
+            <th class="num" style="width:90px;">Rcvd so far</th>
+            <th class="num" style="width:85px;">Recv qty <span style="color:#ef4444">*</span></th>
+            <th class="num" style="width:80px;">Counted</th>
+            <th style="width:110px;">Lot #</th>
+            <th style="width:44px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for li in line_items %}
+            {% set fully_done = li.already_received >= li.ordered and li.ordered > 0 %}
+            <tr class="{{ 'done' if fully_done else '' }}" x-data="{ hasPhoto: false }">
+
+              <input type="hidden" name="zoho_item_id[]" value="{{ li.zoho_item_id }}">
+              <input type="hidden" name="zoho_line_item_id[]" value="{{ li.zoho_line_item_id }}">
+
+              {# Item: thumbnail + name + badge #}
+              <td>
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                  {% if li.item and li.item.image_path %}
+                    <img src="/uploads/items/{{ li.item.image_path }}" alt=""
+                         style="width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#f5f5f4;">
+                  {% else %}
+                    <span style="width:36px;height:36px;border-radius:6px;background:#f5f5f4;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#a8a29e;font-size:11px;font-weight:600;">
+                      {{ li.name[:2].upper() }}
+                    </span>
+                  {% endif %}
+                  <div style="min-width:0;">
+                    <p style="font-size:13px;font-weight:500;color:#1c1917;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;">
+                      {{ li.name | replace('[Packaging]', '') | replace('[packaging]', '') | trim }}
+                    </p>
+                    <div style="display:flex;align-items:center;gap:6px;margin-top:2px;flex-wrap:wrap;">
+                      {% if li.item %}
+                        {% if li.item.material_code %}
+                          <span style="font-family:monospace;font-size:10px;color:#a8a29e;">{{ li.item.material_code }}</span>
+                        {% else %}
+                          <span style="font-size:10px;color:#d97706;background:#fffbeb;border-radius:3px;padding:0 4px;">no material code</span>
+                        {% endif %}
+                        {% if li.item.unit %}
+                          <span style="font-size:10px;color:#a8a29e;">&middot; {{ li.item.unit }}</span>
+                        {% endif %}
+                      {% endif %}
+                    </div>
+                  </div>
+                </div>
+              </td>
+
+              {# Ordered #}
+              <td style="text-align:right;font-size:13px;color:#57534e;font-variant-numeric:tabular-nums;">
+                {{ li.ordered | int | qty }}
+              </td>
+
+              {# Already received #}
+              <td style="text-align:right;font-size:13px;font-variant-numeric:tabular-nums;
+                {% if fully_done %}color:#059669;font-weight:500;
+                {% elif li.already_received > 0 %}color:#d97706;font-weight:500;
+                {% else %}color:#a8a29e;{% endif %}">
+                {{ li.already_received | int | qty if li.already_received > 0 else '—' }}
+              </td>
+
+              {# Recv qty input #}
+              <td>
+                <input type="number"
+                       name="qty_{{ li.zoho_item_id }}"
+                       placeholder="{{ [li.ordered - li.already_received, 0] | max | int }}"
+                       min="0" step="any"
+                       value="{{ ([li.ordered - li.already_received, 0] | max) | int if li.already_received < li.ordered else 0 }}"
+                       class="recv-input{{ ' done-bg' if fully_done else '' }}">
+              </td>
+
+              {# Counted qty input #}
+              <td>
+                <input type="number"
+                       name="counted_{{ li.zoho_item_id }}"
+                       placeholder="—"
+                       min="0" step="any"
+                       class="recv-input">
+              </td>
+
+              {# Lot # input #}
+              <td>
+                <input type="text"
+                       name="lot_{{ li.zoho_item_id }}"
+                       placeholder="optional"
+                       class="recv-input recv-input-text">
+              </td>
+
+              {# Photo — icon only, native input hidden via inline style #}
+              <td style="text-align:center;">
+                <label :class="hasPhoto ? 'cam-btn' + ' has-photo-btn' : 'cam-btn'" title="Add photo"
+                       :style="hasPhoto ? 'border-color:#6ee7b7;background:#ecfdf5;color:#059669;' : ''">
+                  <input type="file"
+                         name="photo_{{ li.zoho_item_id }}"
+                         accept=".jpg,.jpeg,.png,.webp,.heic"
+                         @change="hasPhoto = $event.target.files.length > 0"
+                         style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;">
+                  <svg viewBox="0 0 20 20" fill="currentColor" style="width:15px;height:15px;flex-shrink:0;">
+                    <path fill-rule="evenodd" d="M1 8a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 018.07 3h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0016.07 6H17a2 2 0 012 2v7a2 2 0 01-2 2H3a2 2 0 01-2-2V8zm13.5 3a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM10 14a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+                  </svg>
+                </label>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;">
+      <input type="text" name="notes" placeholder="Notes — damage, short ship, pallet condition…"
+             style="flex:1;padding:9px 14px;font-size:13px;border:1px solid #d6d3d1;border-radius:10px;background:white;outline:none;">
+      <button type="submit"
+              style="flex-shrink:0;background:#1c1917;color:white;padding:9px 22px;font-size:13px;font-weight:500;border-radius:10px;border:none;cursor:pointer;white-space:nowrap;">
+        Record receipt{% if luma_configured %} &amp; push to Luma{% endif %}
+      </button>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

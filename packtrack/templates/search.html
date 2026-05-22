@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Search · PackTrack{% endblock %}
+{% block container_class %}max-w-4xl{% endblock %}
+{% block content %}
+<form method="get" action="/search" class="mb-6">
+  <input name="q" value="{{ q }}" autofocus placeholder="Search PO numbers, item names, SKU codes, vendors…"
+         class="w-full rounded-xl border-stone-300 text-sm px-4 py-3" />
+</form>
+
+{% if q %}
+  <p class="text-sm text-stone-500 mb-4">{{ (po_hits|length) + (item_hits|length) }} results for <span class="font-medium text-stone-900">"{{ q }}"</span></p>
+{% endif %}
+
+{% if po_hits %}
+  <section class="mb-6">
+    <h2 class="text-xs font-medium uppercase tracking-wider text-stone-500 mb-2">Purchase orders</h2>
+    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
+      {% for po in po_hits %}
+        <li>
+          <a href="/po/{{ po.id }}" class="flex items-center justify-between gap-4 px-4 py-2.5 hover:bg-stone-50">
+            <div class="min-w-0">
+              <p class="text-sm font-medium truncate">{{ po.po_number }}</p>
+              <p class="text-xs text-stone-500">{{ po.lines|length }} item(s) · {{ po.created_at.strftime('%Y-%m-%d') }}</p>
+            </div>
+            <span class="text-xs text-stone-400 shrink-0">{{ po.status_label }}</span>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+{% if item_hits %}
+  <section>
+    <h2 class="text-xs font-medium uppercase tracking-wider text-stone-500 mb-2">Items</h2>
+    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
+      {% for it in item_hits %}
+        <li class="px-4 py-2.5 flex items-center gap-3">
+          {% if it.image_path %}
+            <img src="/uploads/items/{{ it.image_path }}" alt="" class="size-9 rounded-md object-cover bg-stone-100 shrink-0" />
+          {% else %}
+            <span class="size-9 rounded-md bg-stone-100 grid place-items-center text-xs font-medium text-stone-500 shrink-0">{{ it.name|initials }}</span>
+          {% endif %}
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium truncate">{{ it.name }}</p>
+            <p class="text-xs text-stone-500">{{ it.sku_code or '—' }}{% if it.vendor %} · {{ it.vendor }}{% endif %}</p>
+          </div>
+          <span class="text-xs text-stone-500 shrink-0 tabular-nums">{{ it.current_stock|qty }} {{ it.unit }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+{% if q and not po_hits and not item_hits %}
+  <div class="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
+    Nothing matched "{{ q }}".
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Settings · Admin · PackTrack{% endblock %}
+{% block container_class %}max-w-3xl{% endblock %}
+{% block content %}
+<nav class="flex items-center gap-4 text-sm mb-4">
+  <a href="/admin/users" class="text-stone-500 hover:text-stone-900">Users</a>
+  <a href="/admin/settings" class="text-stone-900 font-medium">Settings</a>
+  <a href="/admin/sync" class="text-stone-500 hover:text-stone-900">Sync</a>
+</nav>
+<h1 class="text-2xl font-semibold mb-2">Settings</h1>
+<p class="text-sm text-stone-500 mb-6">Owner only. Vendor scope and danger-zone controls.</p>
+
+{% if request.query_params.get('wiped') == 'ok' %}
+  <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 mb-4 text-sm text-emerald-900">
+    All transactional data wiped. Users + settings preserved.
+  </div>
+{% elif request.query_params.get('wiped') == 'cancel' %}
+  <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-4 text-sm text-amber-900">
+    Wipe cancelled — you must type WIPE in the confirm field.
+  </div>
+{% endif %}
+
+<section class="bg-white border border-stone-200 rounded-xl p-5 mb-4">
+  <h2 class="text-sm font-medium text-stone-700 mb-1">Vendor scope</h2>
+  <p class="text-xs text-stone-500 mb-3">
+    Only items / POs whose vendor matches this string (case-insensitive substring) appear across the app.
+    Leave blank to see all vendors. Useful when Zoho has many suppliers but you want to focus on one.
+  </p>
+  <form method="post" action="/admin/settings/scope" class="flex items-center gap-2 flex-wrap">
+    <input name="vendor_scope" value="{{ scope }}" placeholder="e.g. Helen"
+           list="vendor-list"
+           class="flex-1 min-w-[200px] rounded-lg border-stone-300 text-sm" />
+    <datalist id="vendor-list">
+      {% for v in vendors %}<option value="{{ v }}">{% endfor %}
+    </datalist>
+    <button class="rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium hover:bg-stone-800">
+      Save
+    </button>
+    {% if scope %}
+      <a href="/admin/settings/scope" class="text-xs text-stone-500 hover:text-stone-900"
+         onclick="event.preventDefault(); document.querySelector('form[action=\'/admin/settings/scope\'] input').value=''; this.closest('form').submit();">
+        Clear
+      </a>
+    {% endif %}
+  </form>
+  {% if scope %}
+    <p class="mt-3 text-xs text-stone-600">Currently scoped to <strong>{{ scope }}</strong>.</p>
+  {% else %}
+    <p class="mt-3 text-xs text-stone-500">All vendors visible.</p>
+  {% endif %}
+  {% if vendors %}
+    <p class="mt-3 text-[11px] text-stone-400">
+      Suggestions from your data: {{ vendors[:8]|join(' · ') }}{% if vendors|length > 8 %} · …{% endif %}
+    </p>
+  {% endif %}
+</section>
+
+<section class="bg-white border border-red-200 rounded-xl p-5 mb-4">
+  <h2 class="text-sm font-medium text-red-800 mb-1">Danger zone</h2>
+  <p class="text-xs text-stone-600 mb-3">
+    Drops every PO, line item, attachment, shipment, item, sync log, and Zoho mirror row.
+    Keeps users and settings (vendor scope survives). Type <strong>WIPE</strong> to confirm.
+  </p>
+  <form method="post" action="/admin/wipe-data" class="flex items-center gap-2 flex-wrap"
+        onsubmit="return confirm('Wipe all transactional data? This cannot be undone.')">
+    <input name="confirm" placeholder="Type WIPE to confirm" required
+           class="flex-1 min-w-[200px] rounded-lg border-red-300 text-sm" />
+    <button class="rounded-lg bg-red-600 text-white px-4 py-2 text-sm font-medium hover:bg-red-700">
+      Wipe data
+    </button>
+  </form>
+</section>
+{% endblock %}

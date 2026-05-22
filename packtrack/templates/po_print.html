@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Purchase Order {{ po.po_number }}</title>
+  <style>
+    @page { size: letter; margin: 0.6in; }
+    @media print { .no-print { display: none !important; } body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1c1917;
+      margin: 0;
+      padding: 24px;
+      background: #fff;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .sheet { max-width: 7.8in; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding-bottom: 16px; border-bottom: 2px solid #1c1917; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-mark { width: 34px; height: 34px; border-radius: 6px; background: #1c1917; color: white; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+    .doc-title { text-align: right; }
+    .doc-title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: 0.02em; }
+    .doc-title .meta { color: #57534e; font-size: 12px; margin-top: 2px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 18px 0; }
+    .label { color: #78716c; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+    .value { font-size: 13px; }
+    .pill { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 999px; background: #f5f5f4; color: #44403c; text-transform: uppercase; letter-spacing: 0.04em; }
+    table.lines { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.lines th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #78716c; padding: 8px 10px; border-bottom: 1px solid #e7e5e4; }
+    table.lines td { padding: 10px; border-bottom: 1px solid #f5f5f4; vertical-align: top; }
+    table.lines td.num, table.lines th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .totals { margin-top: 12px; display: flex; justify-content: flex-end; }
+    .totals-table { min-width: 240px; }
+    .totals-table .row { display: flex; justify-content: space-between; padding: 4px 0; }
+    .totals-table .row.grand { font-weight: 700; font-size: 16px; padding-top: 8px; margin-top: 4px; border-top: 1px solid #1c1917; }
+    .notes { margin-top: 24px; padding: 12px 14px; background: #fafaf9; border-left: 3px solid #d6d3d1; }
+    .notes h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #57534e; font-weight: 600; }
+    .notes p { margin: 0; white-space: pre-line; }
+    .signatures { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
+    .sig { border-top: 1px solid #1c1917; padding-top: 4px; font-size: 11px; color: #57534e; }
+    footer { margin-top: 36px; padding-top: 12px; border-top: 1px solid #e7e5e4; color: #a8a29e; font-size: 10px; display: flex; justify-content: space-between; }
+    .toolbar { position: fixed; top: 12px; right: 12px; }
+    .toolbar button { background: #1c1917; color: white; border: 0; border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer; }
+    .item-thumb { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; background: #f5f5f4; vertical-align: middle; margin-right: 8px; }
+    .item-fallback { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 4px; background: #f5f5f4; color: #57534e; font-size: 10px; font-weight: 600; vertical-align: middle; margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <div class="toolbar no-print">
+    <button onclick="window.print()">Print / Save PDF</button>
+  </div>
+
+  <div class="sheet">
+    <header class="header">
+      <div class="brand">
+        <span class="brand-mark">PT</span>
+        <div>
+          <div style="font-weight:600;">PackTrack</div>
+          <div style="color:#78716c; font-size:11px;">Procurement</div>
+        </div>
+      </div>
+      <div class="doc-title">
+        <h1>Purchase Order</h1>
+        <div class="meta">{{ po.po_number }}{% if po.zoho_po_id %} · Zoho {{ po.zoho_po_id }}{% endif %}</div>
+        <div class="meta">{{ po.created_at.strftime('%B %d, %Y') }}</div>
+      </div>
+    </header>
+
+    <div class="grid-2">
+      <div>
+        <div class="label">Vendor</div>
+        {% set vendors = [] %}
+        {% for line in po.lines %}
+          {% if line.item.vendor and line.item.vendor not in vendors %}{% set _ = vendors.append(line.item.vendor) %}{% endif %}
+        {% endfor %}
+        <div class="value">{{ vendors|join(' · ') if vendors else '—' }}</div>
+      </div>
+      <div>
+        <div class="label">Status / Urgency</div>
+        <div class="value">
+          <span class="pill">{{ po.status_label }}</span>
+          {% if po.urgency.value != 'normal' %}<span class="pill" style="background:#fef3c7; color:#92400e;">{{ po.urgency.value|upper }}</span>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% set summary = po.item_summary %}
+    {% if summary|length >= 2 %}
+      <div style="margin: 16px 0 8px; padding: 10px 12px; background: #fafaf9; border: 1px solid #e7e5e4; border-radius: 6px;">
+        <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #78716c; margin-bottom: 6px;">Mix · {{ summary|length }} distinct items</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px;">
+          {% for s in summary %}
+            <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 12px;">
+              <span style="color: #1c1917;">{{ s.name }} <span style="color:#a8a29e;">· {{ s.total_qty|qty }} {{ s.unit }}</span></span>
+              <span style="font-variant-numeric: tabular-nums; color: #44403c;">{{ s.total_value|money(po.currency) }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <table class="lines">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="num">Qty</th>
+          <th class="num">Unit price</th>
+          <th class="num">Line total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set ns = namespace(prev=None, idx=0) %}
+        {% for line in po.lines_sorted %}
+          {% if line.item.id != ns.prev %}{% set ns.idx = 1 %}{% else %}{% set ns.idx = ns.idx + 1 %}{% endif %}
+          {% set ns.prev = line.item.id %}
+          {% set dup_count = po.item_summary | selectattr('item.id', 'equalto', line.item.id) | map(attribute='line_count') | first %}
+          <tr>
+            <td>
+              {% if line.item.image_path %}
+                <img class="item-thumb" src="/uploads/items/{{ line.item.image_path }}" alt="" />
+              {% else %}
+                <span class="item-fallback">{{ line.item.name|initials }}</span>
+              {% endif %}
+              <strong>{{ line.item.name }}</strong>{% if dup_count > 1 %}<span style="color:#a8a29e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; margin-left: 6px;">· split {{ ns.idx }}/{{ dup_count }}</span>{% endif %}
+              {% if line.item.sku_code %}<div style="color:#78716c; font-size:11px; margin-left:36px; margin-top:2px;">{{ line.item.sku_code }}</div>{% endif %}
+              {% if line.line_notes %}<div style="color:#57534e; font-size:11px; margin-left:36px; margin-top:2px;">{{ line.line_notes }}</div>{% endif %}
+            </td>
+            <td class="num">{{ line.quantity|qty }} {{ line.item.unit }}</td>
+            <td class="num">{% if line.unit_price %}{{ line.unit_price|money(po.currency) }}{% else %}—{% endif %}</td>
+            <td class="num">{% if line.line_total %}{{ line.line_total|money(po.currency) }}{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="totals">
+      <div class="totals-table">
+        <div class="row"><span>Subtotal</span><span>{{ po.total|money(po.currency) }}</span></div>
+        <div class="row grand"><span>Total</span><span>{{ po.total|money(po.currency) }}</span></div>
+      </div>
+    </div>
+
+    {% if po.notes %}
+      <div class="notes">
+        <h3>Notes</h3>
+        <p>{{ po.notes }}</p>
+      </div>
+    {% endif %}
+
+    <div class="signatures">
+      <div class="sig">Buyer signature / date</div>
+      <div class="sig">Vendor signature / date</div>
+    </div>
+
+    <footer>
+      <span>PackTrack v{{ app_version }}</span>
+      <span>Generated {{ po.updated_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>
+    </footer>
+  </div>
+</body>
+</html>

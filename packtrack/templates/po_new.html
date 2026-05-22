@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}New PO · PackTrack{% endblock %}
+{% block container_class %}max-w-4xl{% endblock %}
+{% block content %}
+<a href="/" class="text-sm text-stone-500 hover:text-stone-900">← Home</a>
+<h1 class="text-2xl font-semibold mt-2 mb-6">New purchase order</h1>
+
+{% if not items %}
+  <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 mb-4">
+    <p class="text-sm text-amber-900">
+      No inventory yet. <a href="/admin/sync" class="font-medium underline">Sync Zoho</a> to load your items, then come back.
+    </p>
+  </div>
+{% endif %}
+
+<form method="post" action="/po/new" class="space-y-4"
+      x-data='poForm({{ items|tojson }}, {{ preselect.id if preselect else 'null' }}, {{ preselect_qty if preselect_qty else 'null' }})'>
+
+  <section class="bg-white border border-stone-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <label class="block">
+      <span class="text-xs text-stone-500">Urgency</span>
+      <select name="urgency" class="mt-1 w-full rounded-lg border-stone-300 text-sm">
+        {% for u in Urgency %}<option value="{{ u.value }}">{{ u.value|title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="block">
+      <span class="text-xs text-stone-500">Currency</span>
+      <select name="currency" class="mt-1 w-full rounded-lg border-stone-300 text-sm">
+        {% for c in ['USD','EUR','GBP','CNY','CAD','AUD','JPY'] %}
+          <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </section>
+
+  <section class="bg-white border border-stone-200 rounded-xl p-4">
+    <h2 class="text-sm font-medium text-stone-700 mb-3">Items</h2>
+
+    {# Header row — visible only on sm+ to avoid wasting space on phone #}
+    <div class="hidden sm:grid sm:grid-cols-12 gap-2 mb-2 px-1 text-[11px] uppercase tracking-wider text-stone-400">
+      <div class="col-span-5">Item</div>
+      <div class="col-span-2 text-right">Qty</div>
+      <div class="col-span-2 text-right">Unit price</div>
+      <div class="col-span-2 text-right">Line total</div>
+      <div class="col-span-1"></div>
+    </div>
+
+    <div class="space-y-2">
+      <template x-for="(line, idx) in lines" :key="idx">
+        <div class="grid grid-cols-12 gap-2 items-start">
+          <div class="col-span-12 sm:col-span-5">
+            <select name="item_id[]" x-model="line.item_id"
+                    @change="onItemChange(idx)"
+                    class="w-full rounded-lg border-stone-300 text-sm">
+              <option value="">Select item…</option>
+              <template x-for="it in items" :key="it.id">
+                <option :value="it.id" x-text="it.name + (it.current_stock !== undefined ? ' (' + it.current_stock + ' on hand)' : '')"></option>
+              </template>
+            </select>
+          </div>
+          <div class="col-span-4 sm:col-span-2">
+            <input name="quantity[]" x-model.number="line.quantity" type="number" step="0.01" min="0.01" placeholder="Qty"
+                   class="w-full rounded-lg border-stone-300 text-sm text-right" />
+          </div>
+          <div class="col-span-4 sm:col-span-2">
+            <input name="unit_price[]" x-model.number="line.unit_price" type="number" step="0.01" min="0" placeholder="0.00"
+                   class="w-full rounded-lg border-stone-300 text-sm text-right" />
+          </div>
+          <div class="col-span-3 sm:col-span-2 px-3 py-2 text-right text-sm tabular-nums text-stone-600"
+               x-text="lineTotalFmt(line)"></div>
+          <div class="col-span-1 flex items-start justify-end">
+            <button type="button" @click="removeLine(idx)" class="text-stone-400 hover:text-red-600 px-2 py-2">×</button>
+          </div>
+          <input type="hidden" name="arrival[]" x-model="line.arrival" />
+          <input type="hidden" name="line_notes[]" x-model="line.notes" />
+        </div>
+      </template>
+    </div>
+
+    <button type="button" @click="addLine()" class="mt-3 text-sm text-stone-600 hover:text-stone-900">+ Add another item</button>
+
+    {# Total #}
+    <div class="mt-4 pt-3 border-t border-stone-100 flex items-baseline justify-between">
+      <span class="text-sm text-stone-500">Total</span>
+      <span class="text-lg font-semibold tabular-nums" x-text="totalFmt"></span>
+    </div>
+  </section>
+
+  <section class="bg-white border border-stone-200 rounded-xl p-4">
+    <label class="block">
+      <span class="text-xs text-stone-500">Notes (optional)</span>
+      <textarea name="notes" rows="3" class="mt-1 w-full rounded-lg border-stone-300 text-sm"></textarea>
+    </label>
+  </section>
+
+  <button class="w-full rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
+    Create PO and send to design review
+  </button>
+</form>
+
+<script>
+  function poForm(items, preselectId, preselectQty) {
+    const symbols = { USD:'$', EUR:'€', GBP:'£', CNY:'¥', JPY:'¥', CAD:'$', AUD:'$' };
+    return {
+      items,
+      currency: 'USD',
+      lines: [{
+        item_id: preselectId ? String(preselectId) : '',
+        quantity: preselectQty ? Number(preselectQty) : '',
+        unit_price: '',
+        arrival: '',
+        notes: '',
+      }],
+      addLine() { this.lines.push({ item_id: '', quantity: '', unit_price: '', arrival: '', notes: '' }); },
+      removeLine(i) {
+        this.lines.splice(i, 1);
+        if (this.lines.length === 0) this.addLine();
+      },
+      onItemChange(i) {
+        // Suggest the most recent unit cost as a starting price
+        const line = this.lines[i];
+        const it = this.items.find(x => String(x.id) === String(line.item_id));
+        if (it && (line.unit_price === '' || line.unit_price == null) && it.last_unit_cost) {
+          line.unit_price = it.last_unit_cost;
+        }
+      },
+      lineTotal(line) {
+        const q = Number(line.quantity) || 0;
+        const p = Number(line.unit_price) || 0;
+        return q * p;
+      },
+      lineTotalFmt(line) {
+        const v = this.lineTotal(line);
+        if (!v) return '—';
+        return this.fmt(v);
+      },
+      get total() {
+        return this.lines.reduce((sum, l) => sum + this.lineTotal(l), 0);
+      },
+      get totalFmt() {
+        return this.fmt(this.total);
+      },
+      fmt(v) {
+        const sym = symbols[this.currency] || '';
+        const s = v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return sym ? sym + s : (this.currency + ' ' + s);
+      },
+    };
+  }
+</script>
+{% endblock %}

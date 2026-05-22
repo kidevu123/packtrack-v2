@@ -1,0 +1,26 @@
+[Unit]
+Description=PackTrack v2 (FastAPI + APScheduler)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=packtrack
+Group=packtrack
+WorkingDirectory=/opt/packtrack/app
+EnvironmentFile=/etc/packtrack/packtrack.env
+ExecStart=/opt/packtrack/app/.venv/bin/uvicorn packtrack.main:app \
+  --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips '*'
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=4096
+
+# Hardening — this is a single-app LXC, defense in depth.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/packtrack/uploads /var/log/packtrack
+
+[Install]
+WantedBy=multi-user.target
