@@ -8,7 +8,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -397,6 +397,31 @@ class BoxReceipt(SQLModel, table=True):
         if self.luma_push_status == LumaPushStatus.NOT_READY:
             return False
         return bool((self.material_code or "").strip())
+
+
+class MaterialConsumptionEvent(SQLModel, table=True):
+    """Audit log of packaging consumption pushes from Luma.
+
+    One row per (finished_lot_id, item) pair — idempotent by unique constraint.
+    Drives auto-maintenance of Item.current_stock and Item.daily_usage_rate.
+    """
+    __tablename__ = "material_consumption_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "finished_lot_id", "item_id",
+            name="uq_consumption_lot_item",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    item_id: int = Field(foreign_key="item.id", index=True)
+    qty_consumed: float
+    finished_lot_id: str = Field(max_length=128, index=True)
+    finished_lot_number: str = Field(max_length=128, default="")
+    supplier_lot_number: str | None = Field(default=None, max_length=128)
+    packaging_lot_id: str | None = Field(default=None, max_length=128)
+    consumed_at: datetime
+    received_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ZohoMirror(SQLModel, table=True):
