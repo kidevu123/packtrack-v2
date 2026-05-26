@@ -414,7 +414,7 @@ class MaterialConsumptionEvent(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    item_id: int = Field(foreign_key="item.id", index=True)
+    item_id: int = Field(foreign_key="items.id", index=True)
     qty_consumed: float
     finished_lot_id: str = Field(max_length=128, index=True)
     finished_lot_number: str = Field(max_length=128, default="")
