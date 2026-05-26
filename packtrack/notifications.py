@@ -65,3 +65,46 @@ def notify(session: Session, event: str, po: PurchaseOrder, **ctx) -> None:
             handler(event, po, recipients, ctx)
         except Exception:  # never let a notify call break a request
             logger.exception("Notification handler %s failed for %s", handler.__name__, event)
+
+
+def notify_stock_alert(session: Session, item: "Item", alert_type: str) -> None:
+    """Send Telegram stock alert to all active owners when a threshold is crossed.
+
+    alert_type: 'reorder' or 'critical'. Never raises.
+    """
+    from packtrack.models import Item as _Item  # avoid circular at module level
+    from packtrack.telegram import send
+
+    owners = list(
+        session.exec(
+            select(User).where(
+                User.role == Role.OWNER,
+                User.is_active == True,  # noqa: E712
+                User.telegram_chat_id.isnot(None),
+            )
+        )
+    )
+    if not owners:
+        return
+
+    icon = "🔴" if alert_type == "critical" else "🟡"
+    days_str = ""
+    if item.daily_usage_rate and item.daily_usage_rate > 0:
+        days_str = f" (~{int(item.current_stock / item.daily_usage_rate)}d left)"
+
+    threshold = item.critical_point if alert_type == "critical" else item.reorder_point
+    msg = (
+        f"{icon} Stock alert — {item.name}\n"
+        f"On-hand: {item.current_stock:.0f} {item.unit}{days_str}\n"
+        f"Below {'critical' if alert_type == 'critical' else 'reorder'} "
+        f"point ({threshold:.0f})\n"
+        f"→ /po/new?item_id={item.id}"
+    )
+
+    for user in owners:
+        try:
+            send(str(user.telegram_chat_id), msg)
+        except Exception:
+            logger.exception(
+                "notify_stock_alert: failed for user %s item %s", user.id, item.id
+            )
