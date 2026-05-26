@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from packtrack.models import Item, MaterialConsumptionEvent
+from packtrack.models import Item, MaterialConsumptionEvent, User
 from packtrack.services.consumption import (
     _recompute_daily_usage_rate,
     _threshold_crossed,
@@ -25,6 +25,9 @@ def session_fixture():
     # PostgreSQL-only JSONB columns that are incompatible with SQLite.
     Item.metadata.tables["items"].create(bind=engine)
     MaterialConsumptionEvent.metadata.tables["material_consumption_events"].create(bind=engine)
+    # users table is needed by notify_stock_alert (queried on threshold crossings).
+    # No JSONB columns so it is safe to create under SQLite.
+    User.metadata.tables["users"].create(bind=engine)
     with Session(engine) as session:
         yield session
 
@@ -123,3 +126,59 @@ def test_recompute_daily_usage_rate(session: Session, item: Item):
     session.commit()
     rate = _recompute_daily_usage_rate(session, item.id)
     assert abs(rate - 600.0 / 30.0) < 0.01
+
+
+# ── Route tests ──────────────────────────────────────────────────────────────
+
+# Lazy imports: packtrack.main → packtrack.db → engine uses settings.DATABASE_URL
+# at module load time.  conftest.py sets DATABASE_URL to a postgres placeholder
+# before any module is collected, so we must NOT import these at the top of this
+# file.  Instead we import inside the helper so they are resolved at *call* time,
+# after monkeypatch has had a chance to set the env var.
+
+
+def _client(session: Session):  # -> TestClient
+    import os
+    os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+    from fastapi.testclient import TestClient
+    from packtrack.main import app
+    from packtrack.db import get_session
+    app.dependency_overrides[get_session] = lambda: session
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_route_rejects_missing_secret(session: Session, item: Item):
+    resp = _client(session).post("/api/internal/luma-consumption", json=PAYLOAD)
+    assert resp.status_code == 401
+
+
+def test_route_rejects_wrong_secret(session: Session, item: Item):
+    resp = _client(session).post(
+        "/api/internal/luma-consumption",
+        json=PAYLOAD,
+        headers={"x-luma-packtrack-secret": "wrong"},
+    )
+    assert resp.status_code == 401
+
+
+def test_route_processes_valid_request(session: Session, item: Item, monkeypatch):
+    monkeypatch.setenv("LUMA_PACKTRACK_SECRET", "test-secret")
+    resp = _client(session).post(
+        "/api/internal/luma-consumption",
+        json=PAYLOAD,
+        headers={"x-luma-packtrack-secret": "test-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    session.refresh(item)
+    assert item.current_stock == 4000.0
+
+
+def test_route_returns_400_on_missing_fields(session: Session, monkeypatch):
+    monkeypatch.setenv("LUMA_PACKTRACK_SECRET", "test-secret")
+    resp = _client(session).post(
+        "/api/internal/luma-consumption",
+        json={"source": "LUMA"},
+        headers={"x-luma-packtrack-secret": "test-secret"},
+    )
+    assert resp.status_code == 400
