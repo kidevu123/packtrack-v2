@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     LUMA_RECEIPT_WEBHOOK_URL: str = ""
     LUMA_PACKTRACK_SECRET: str = ""
+    LUMA_URL: str = ""                 # e.g. http://192.168.1.134:3000
 
     OIDC_CLIENT_ID: str = ""
     OIDC_CLIENT_SECRET: str = ""

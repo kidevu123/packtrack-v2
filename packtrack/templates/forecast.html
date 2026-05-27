@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}Forecast · PackTrack{% endblock %}
+{% block container_class %}max-w-6xl{% endblock %}
+{% block content %}
+
+<div class="flex items-end justify-between gap-4 mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold">Inventory Forecast</h1>
+    <p class="text-sm text-stone-500 mt-1">Based on 60-day sales velocity × BOM. Sea lead times applied.</p>
+  </div>
+  <a href="/inventory" class="text-sm text-stone-500 hover:text-stone-900">← Back to Inventory</a>
+</div>
+
+{% if order_now %}
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-3">
+    <span class="size-2.5 rounded-full bg-red-500 shrink-0"></span>
+    <h2 class="font-semibold text-red-700">Order Now ({{ order_now|length }})</h2>
+    <span class="text-xs text-red-500">Reorder date within 7 days</span>
+  </div>
+  <div class="bg-white border border-red-200 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-red-50 text-red-800 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-4 py-2.5 text-left">Material</th>
+          <th class="px-4 py-2.5 text-right">On Hand</th>
+          <th class="px-4 py-2.5 text-right">Days Left</th>
+          <th class="px-4 py-2.5 text-right">Reorder By</th>
+          <th class="px-4 py-2.5 text-right">Suggested Qty</th>
+          <th class="px-4 py-2.5 text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-red-100">
+        {% for row in order_now %}
+        <tr class="hover:bg-red-50">
+          <td class="px-4 py-3 font-medium">
+            {{ row.item.name }}
+            <div class="text-xs text-stone-400">{{ row.item.material_code }}</div>
+          </td>
+          <td class="px-4 py-3 text-right text-stone-700">{{ row.item.current_stock | int | format_thousands }}</td>
+          <td class="px-4 py-3 text-right font-semibold text-red-600">{{ row.days_of_stock | int }}</td>
+          <td class="px-4 py-3 text-right text-red-600 font-medium">{{ row.reorder_by_sea.strftime('%b %d') if row.reorder_by_sea else '—' }}</td>
+          <td class="px-4 py-3 text-right text-stone-700">{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
+               class="inline-flex items-center gap-1 rounded-lg bg-red-600 text-white px-3 py-1.5 text-xs font-medium hover:bg-red-700">
+              Order →
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if watch %}
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-3">
+    <span class="size-2.5 rounded-full bg-amber-400 shrink-0"></span>
+    <h2 class="font-semibold text-amber-700">Watch ({{ watch|length }})</h2>
+    <span class="text-xs text-amber-600">Reorder date within 30 days</span>
+  </div>
+  <div class="bg-white border border-amber-200 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-amber-50 text-amber-800 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-4 py-2.5 text-left">Material</th>
+          <th class="px-4 py-2.5 text-right">On Hand</th>
+          <th class="px-4 py-2.5 text-right">Days Left</th>
+          <th class="px-4 py-2.5 text-right">Reorder By</th>
+          <th class="px-4 py-2.5 text-right">Suggested Qty</th>
+          <th class="px-4 py-2.5 text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-amber-100">
+        {% for row in watch %}
+        <tr class="hover:bg-amber-50">
+          <td class="px-4 py-3 font-medium">
+            {{ row.item.name }}
+            <div class="text-xs text-stone-400">{{ row.item.material_code }}</div>
+          </td>
+          <td class="px-4 py-3 text-right text-stone-700">{{ row.item.current_stock | int | format_thousands }}</td>
+          <td class="px-4 py-3 text-right text-amber-600">{{ row.days_of_stock | int }}</td>
+          <td class="px-4 py-3 text-right text-amber-700 font-medium">{{ row.reorder_by_sea.strftime('%b %d') if row.reorder_by_sea else '—' }}</td>
+          <td class="px-4 py-3 text-right text-stone-700">{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
+               class="inline-flex items-center gap-1 rounded-lg border border-amber-400 text-amber-700 px-3 py-1.5 text-xs font-medium hover:bg-amber-50">
+              Plan PO →
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="mb-6">
+  <div class="flex items-center gap-2 mb-3">
+    <span class="size-2.5 rounded-full bg-stone-300 shrink-0"></span>
+    <h2 class="font-semibold text-stone-700">Full Forecast ({{ all_rows|length }} materials)</h2>
+  </div>
+  <div class="bg-white border border-stone-200 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-stone-50 text-stone-600 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="px-4 py-2.5 text-left">Material</th>
+          <th class="px-4 py-2.5 text-right">On Hand</th>
+          <th class="px-4 py-2.5 text-right">Daily Demand</th>
+          <th class="px-4 py-2.5 text-right">Days of Stock</th>
+          <th class="px-4 py-2.5 text-right">Reorder By (Sea)</th>
+          <th class="px-4 py-2.5 text-right">Suggested Qty</th>
+          <th class="px-4 py-2.5 text-right">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-stone-100">
+        {% for row in all_rows %}
+        <tr class="hover:bg-stone-50 cursor-pointer"
+            hx-get="/inventory/forecast/detail/{{ row.item.id }}"
+            hx-target="#detail-panel"
+            hx-swap="innerHTML">
+          <td class="px-4 py-3 font-medium">
+            {{ row.item.name }}
+            <div class="text-xs text-stone-400">{{ row.item.material_code }}</div>
+          </td>
+          <td class="px-4 py-3 text-right">{{ row.item.current_stock | int | format_thousands }}</td>
+          <td class="px-4 py-3 text-right text-stone-600">
+            {% if row.daily_demand > 0 %}{{ row.daily_demand }}/day{% else %}<span class="text-stone-400">no data</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-right
+            {% if row.panel == 'order_now' %}text-red-600 font-semibold
+            {% elif row.panel == 'watch' %}text-amber-600
+            {% else %}text-stone-700{% endif %}">
+            {% if row.days_of_stock < 9999 %}{{ row.days_of_stock | int }}
+            {% else %}&infin;{% endif %}
+          </td>
+          <td class="px-4 py-3 text-right
+            {% if row.panel == 'order_now' %}text-red-600 font-medium
+            {% elif row.panel == 'watch' %}text-amber-700
+            {% else %}text-stone-500{% endif %}">
+            {{ row.reorder_by_sea.strftime('%b %d, %Y') if row.reorder_by_sea else '—' }}
+          </td>
+          <td class="px-4 py-3 text-right text-stone-600">
+            {% if row.suggested_qty > 0 %}{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}{% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-3 text-right">
+            {% if row.panel == 'order_now' %}
+              <span class="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium">Order Now</span>
+            {% elif row.panel == 'watch' %}
+              <span class="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-medium">Watch</span>
+            {% elif row.panel == 'ok' %}
+              <span class="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-xs font-medium">OK</span>
+            {% else %}
+              <span class="rounded-full bg-stone-100 text-stone-500 px-2 py-0.5 text-xs font-medium">No Data</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="px-4 py-8 text-center text-sm text-stone-400">
+            No packaging materials with material_code found. Ensure Phase A is live and materials have been consumed.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div id="detail-panel" class="mb-6"></div>
+
+{% endblock %}

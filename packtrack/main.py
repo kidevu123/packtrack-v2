@@ -20,7 +20,7 @@ from packtrack import __version__, scheduler
 from packtrack import telegram  # noqa: F401
 from packtrack.config import settings
 from packtrack.db import engine
-from packtrack.routes import admin, auth, inbox, internal, inventory, purchase_orders, receiving, search, telegram_webhook, webhooks
+from packtrack.routes import admin, auth, forecast, inbox, internal, inventory, purchase_orders, receiving, search, telegram_webhook, webhooks
 
 logger = logging.getLogger("packtrack")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -69,9 +69,18 @@ def _initials(name: str | None) -> str:
     return (parts[0][:1] + (parts[1][:1] if len(parts) > 1 else "")).upper()
 
 
+def _format_thousands(value) -> str:
+    """Render an integer with thousands separators."""
+    try:
+        return f"{int(float(value)):,}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 templates.env.filters["qty"] = _qty
 templates.env.filters["money"] = _money
 templates.env.filters["initials"] = _initials
+templates.env.filters["format_thousands"] = _format_thousands
 
 
 @asynccontextmanager
@@ -130,6 +139,7 @@ app.include_router(search.router)
 app.include_router(telegram_webhook.router)
 app.include_router(internal.router)
 app.include_router(webhooks.router)
+app.include_router(forecast.router)
 
 
 @app.get("/healthz")

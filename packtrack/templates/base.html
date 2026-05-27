@@ -49,6 +49,7 @@
           {% endif %}
           <a href="/po" class="text-stone-600 hover:text-stone-900">Pipeline</a>
           <a href="/inventory" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Inventory</a>
+          <a href="/inventory/forecast" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Forecast</a>
           {% if user.role.value in ('owner', 'receiving') %}
             <a href="/receive" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Receiving</a>
           {% endif %}

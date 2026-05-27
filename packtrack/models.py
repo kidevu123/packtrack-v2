@@ -123,6 +123,7 @@ class Item(SQLModel, table=True):
     unit: str = Field(default="units", max_length=40)
     current_stock: float = 0.0
     daily_usage_rate: float = 0.0
+    forecast_alert_sent_stock: float | None = Field(default=None)
     reorder_point: float = 0.0
     reorder_point_locked: bool = False
     critical_point: float = 0.0

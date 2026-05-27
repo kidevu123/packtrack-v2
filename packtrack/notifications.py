@@ -108,3 +108,71 @@ def notify_stock_alert(session: Session, item: "Item", alert_type: str) -> None:
             logger.exception(
                 "notify_stock_alert: failed for user %s item %s", user.id, item.id
             )
+
+
+def notify_forecast_alert(session: Session, row: "ForecastRow") -> None:
+    """Fire once per restock cycle when reorder_by_sea enters the 7-day window.
+
+    Deduplication: skips if current_stock hasn't risen meaningfully since last alert.
+    Never raises.
+    """
+    from packtrack.services.forecast import ForecastRow  # avoid circular at module level
+    from packtrack.telegram import send
+
+    item = row.item
+
+    # Deduplication: if current_stock hasn't risen since last alert, skip.
+    # "risen" = current_stock > last_alerted_stock + 10% of reorder_point (hysteresis)
+    if item.forecast_alert_sent_stock is not None:
+        hysteresis = max(1.0, item.reorder_point * 0.10)
+        if item.current_stock <= item.forecast_alert_sent_stock + hysteresis:
+            return  # already alerted this restock cycle
+
+    owners = list(
+        session.exec(
+            select(User).where(
+                User.role == Role.OWNER,
+                User.is_active == True,  # noqa: E712
+                User.telegram_chat_id.isnot(None),
+            )
+        )
+    )
+    if not owners:
+        return
+
+    days = int(row.days_of_stock) if row.days_of_stock < 9999 else 0
+    reorder_str = row.reorder_by_sea.strftime("%b %d") if row.reorder_by_sea else "overdue"
+    text = (
+        f"🔴 Order Now: {item.name}\n"
+        f"On hand: {int(item.current_stock):,} {item.unit}\n"
+        f"Days of stock: {days}\n"
+        f"Reorder by (sea): {reorder_str}\n"
+        f"Suggested: {int(row.suggested_qty):,} {item.unit}\n"
+        f"Sea lead: {item.sea_lead_days}d"
+    )
+
+    from packtrack.config import settings as _settings
+    for user in owners:
+        try:
+            send(
+                str(user.telegram_chat_id),
+                text,
+                reply_markup={
+                    "inline_keyboard": [[
+                        {
+                            "text": "Create PO",
+                            "url": f"{_settings.APP_BASE_URL}/po/new?item_id={item.id}&suggested_qty={int(row.suggested_qty)}",
+                        }
+                    ]]
+                },
+            )
+        except Exception:
+            logger.exception(
+                "notify_forecast_alert: failed for user %s item %s", user.id, item.id
+            )
+
+    # Mark sent at current stock level so we don't repeat until restocked
+    item.forecast_alert_sent_stock = item.current_stock
+    session.add(item)
+    session.commit()
+    logger.info("Forecast alert sent for item %s (stock=%s)", item.material_code, item.current_stock)

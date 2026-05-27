@@ -1,0 +1,45 @@
+<div class="bg-white border border-stone-200 rounded-xl p-4">
+  <div class="flex items-start justify-between mb-3">
+    <div>
+      <h3 class="font-semibold">{{ row.item.name }}</h3>
+      <div class="text-xs text-stone-400">{{ row.item.material_code }} · {{ row.item.unit }} · Sea: {{ row.item.sea_lead_days }}d / Express: {{ row.item.express_lead_days }}d</div>
+    </div>
+    <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
+       class="text-sm text-blue-600 hover:underline">Create PO →</a>
+  </div>
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
+    <div class="bg-stone-50 rounded-lg p-3">
+      <div class="text-xs text-stone-500 mb-1">On Hand</div>
+      <div class="font-semibold">{{ row.item.current_stock | int | format_thousands }} {{ row.item.unit }}</div>
+    </div>
+    <div class="bg-stone-50 rounded-lg p-3">
+      <div class="text-xs text-stone-500 mb-1">Daily Demand</div>
+      <div class="font-semibold">{% if row.daily_demand > 0 %}{{ row.daily_demand }}/day{% else %}no data{% endif %}</div>
+    </div>
+    <div class="bg-stone-50 rounded-lg p-3">
+      <div class="text-xs text-stone-500 mb-1">Days of Stock</div>
+      <div class="font-semibold {% if row.panel == 'order_now' %}text-red-600{% elif row.panel == 'watch' %}text-amber-600{% endif %}">
+        {% if row.days_of_stock < 9999 %}{{ row.days_of_stock | int }}{% else %}&infin;{% endif %}
+      </div>
+    </div>
+    <div class="bg-stone-50 rounded-lg p-3">
+      <div class="text-xs text-stone-500 mb-1">Reorder By (Sea)</div>
+      <div class="font-semibold {% if row.panel == 'order_now' %}text-red-600{% elif row.panel == 'watch' %}text-amber-600{% endif %}">
+        {{ row.reorder_by_sea.strftime('%b %d, %Y') if row.reorder_by_sea else '—' }}
+      </div>
+    </div>
+  </div>
+
+  {% if row.sales_drivers %}
+  <div class="text-xs text-stone-500 mb-2">Sales drivers (60-day velocity):</div>
+  <ul class="flex flex-wrap gap-2">
+    {% for sku, qty in row.sales_drivers %}
+    <li class="rounded-md bg-stone-100 px-2 py-1 text-xs">
+      <span class="font-medium">{{ sku }}</span>
+      <span class="text-stone-500"> {{ qty }}/day</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
