@@ -20,7 +20,7 @@ from packtrack import __version__, scheduler
 from packtrack import telegram  # noqa: F401
 from packtrack.config import settings
 from packtrack.db import engine
-from packtrack.routes import admin, auth, inbox, internal, inventory, purchase_orders, receiving, search, telegram_webhook
+from packtrack.routes import admin, auth, inbox, internal, inventory, purchase_orders, receiving, search, telegram_webhook, webhooks
 
 logger = logging.getLogger("packtrack")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -129,6 +129,7 @@ app.include_router(admin.router)
 app.include_router(search.router)
 app.include_router(telegram_webhook.router)
 app.include_router(internal.router)
+app.include_router(webhooks.router)
 
 
 @app.get("/healthz")

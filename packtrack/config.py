@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_WEBHOOK_SECRET: str = ""
 
+    ZOHO_WEBHOOK_SECRET: str = ""
+
     SYNC_INTERVAL_MINUTES: int = 30
     PUSH_RETRY_INTERVAL_MINUTES: int = 5
 
