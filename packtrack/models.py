@@ -461,3 +461,22 @@ class AppSetting(SQLModel, table=True):
     value: str | None = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     updated_by_id: int | None = Field(default=None, foreign_key="users.id")
+
+
+class SalesEvent(SQLModel, table=True):
+    """Audit log of Zoho sales confirmed events.
+
+    One row per zoho_order_id — idempotent by unique constraint.
+    Feeds daily_usage_rate recomputation and forecasting.
+    """
+    __tablename__ = "sales_events"
+    __table_args__ = (
+        UniqueConstraint("zoho_order_id", name="uq_sales_event_order"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    zoho_order_id: str = Field(max_length=128, index=True)
+    product_sku: str = Field(max_length=128, index=True)
+    qty_sold: int
+    sold_at: datetime
+    received_at: datetime = Field(default_factory=datetime.utcnow)
