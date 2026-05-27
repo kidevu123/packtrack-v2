@@ -1,45 +1,188 @@
-<div class="bg-white border border-stone-200 rounded-xl p-4">
-  <div class="flex items-start justify-between mb-3">
+<div class="bg-stone-50 border border-stone-200 rounded-xl overflow-hidden shadow-sm">
+
+  {# ── Header bar ─────────────────────────────────────────────────────────── #}
+  <div class="flex items-start justify-between gap-4 px-5 py-4 border-b border-stone-200 bg-white">
     <div>
-      <h3 class="font-semibold">{{ row.item.name }}</h3>
-      <div class="text-xs text-stone-400">{{ row.item.material_code }} · {{ row.item.unit }} · Sea: {{ row.item.sea_lead_days }}d / Express: {{ row.item.express_lead_days }}d</div>
+      <div class="flex items-center gap-2">
+        {% if row.panel == 'order_now' %}
+          <span class="size-2 rounded-full bg-red-500 shrink-0"></span>
+        {% elif row.panel == 'watch' %}
+          <span class="size-2 rounded-full bg-amber-400 shrink-0"></span>
+        {% else %}
+          <span class="size-2 rounded-full bg-green-400 shrink-0"></span>
+        {% endif %}
+        <h3 class="font-semibold text-stone-900">{{ row.item.name }}</h3>
+        {% if row.panel == 'order_now' %}
+          <span class="rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-semibold">Order Now</span>
+        {% elif row.panel == 'watch' %}
+          <span class="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-semibold">Watch</span>
+        {% elif row.panel == 'ok' %}
+          <span class="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-xs font-semibold">OK</span>
+        {% endif %}
+      </div>
+      <div class="text-xs text-stone-400 mt-1">
+        {{ row.item.material_code }}
+        <span class="mx-1 text-stone-300">·</span>
+        {{ row.item.unit }}
+        <span class="mx-1 text-stone-300">·</span>
+        Sea: <strong class="text-stone-500">{{ row.item.sea_lead_days }}d</strong>
+        <span class="mx-1 text-stone-300">/</span>
+        Express: <strong class="text-stone-500">{{ row.item.express_lead_days }}d</strong>
+      </div>
     </div>
     <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
-       class="text-sm text-blue-600 hover:underline">Create PO →</a>
+       class="inline-flex items-center gap-1.5 rounded-lg
+         {% if row.panel == 'order_now' %}bg-red-600 hover:bg-red-700 text-white shadow-sm
+         {% else %}bg-white border border-stone-300 text-stone-700 hover:bg-stone-50{% endif %}
+         px-3.5 py-2 text-xs font-semibold transition-colors shrink-0">
+      Create PO
+      <svg class="size-3" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
+      </svg>
+    </a>
   </div>
 
-  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
-    <div class="bg-stone-50 rounded-lg p-3">
-      <div class="text-xs text-stone-500 mb-1">On Hand</div>
-      <div class="font-semibold">{{ row.item.current_stock | int | format_thousands }} {{ row.item.unit }}</div>
+  {# ── Stat grid ───────────────────────────────────────────────────────────── #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-px bg-stone-200">
+
+    <div class="bg-white px-4 py-4">
+      <div class="text-xs text-stone-400 uppercase tracking-wide mb-1.5">On Hand</div>
+      <div class="text-lg font-semibold text-stone-900 tabular-nums leading-none">{{ row.item.current_stock | int | format_thousands }}</div>
+      <div class="text-xs text-stone-400 mt-0.5">{{ row.item.unit }}</div>
     </div>
-    <div class="bg-stone-50 rounded-lg p-3">
-      <div class="text-xs text-stone-500 mb-1">Daily Demand</div>
-      <div class="font-semibold">{% if row.daily_demand > 0 %}{{ row.daily_demand }}/day{% else %}no data{% endif %}</div>
+
+    <div class="bg-white px-4 py-4">
+      <div class="text-xs text-stone-400 uppercase tracking-wide mb-1.5">Daily Demand</div>
+      <div class="text-lg font-semibold leading-none
+        {% if row.daily_demand > 0 %}text-stone-900{% else %}text-stone-300{% endif %} tabular-nums">
+        {% if row.daily_demand > 0 %}{{ row.daily_demand }}{% else %}—{% endif %}
+      </div>
+      {% if row.daily_demand > 0 %}<div class="text-xs text-stone-400 mt-0.5">units / day</div>{% endif %}
     </div>
-    <div class="bg-stone-50 rounded-lg p-3">
-      <div class="text-xs text-stone-500 mb-1">Days of Stock</div>
-      <div class="font-semibold {% if row.panel == 'order_now' %}text-red-600{% elif row.panel == 'watch' %}text-amber-600{% endif %}">
+
+    <div class="bg-white px-4 py-4">
+      <div class="text-xs text-stone-400 uppercase tracking-wide mb-1.5">Days of Stock</div>
+      <div class="text-lg font-bold tabular-nums leading-none
+        {% if row.panel == 'order_now' %}text-red-600
+        {% elif row.panel == 'watch' %}text-amber-600
+        {% else %}text-stone-900{% endif %}">
         {% if row.days_of_stock < 9999 %}{{ row.days_of_stock | int }}{% else %}&infin;{% endif %}
       </div>
+      {% if row.days_of_stock < 9999 %}
+      <div class="mt-2 w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+        {% set pct = [[(row.days_of_stock | int), 0] | max, 90] | min %}
+        {% set pct_w = (pct / 90 * 100) | int %}
+        <div class="h-full rounded-full transition-all
+          {% if row.panel == 'order_now' %}bg-red-500
+          {% elif row.panel == 'watch' %}bg-amber-400
+          {% else %}bg-green-400{% endif %}"
+             style="width: {{ pct_w }}%"></div>
+      </div>
+      <div class="flex justify-between mt-0.5">
+        <span class="text-xs text-stone-400">0</span>
+        <span class="text-xs text-stone-400">90d</span>
+      </div>
+      {% endif %}
     </div>
-    <div class="bg-stone-50 rounded-lg p-3">
-      <div class="text-xs text-stone-500 mb-1">Reorder By (Sea)</div>
-      <div class="font-semibold {% if row.panel == 'order_now' %}text-red-600{% elif row.panel == 'watch' %}text-amber-600{% endif %}">
+
+    <div class="bg-white px-4 py-4">
+      <div class="text-xs text-stone-400 uppercase tracking-wide mb-1.5">Reorder By (Sea)</div>
+      <div class="text-sm font-semibold leading-none
+        {% if row.panel == 'order_now' %}text-red-600
+        {% elif row.panel == 'watch' %}text-amber-600
+        {% else %}text-stone-900{% endif %}">
         {{ row.reorder_by_sea.strftime('%b %d, %Y') if row.reorder_by_sea else '—' }}
       </div>
+      {% if row.reorder_by_sea %}
+      <div class="text-xs text-stone-400 mt-0.5">{{ row.item.sea_lead_days }}d sea transit</div>
+      {% endif %}
     </div>
+
   </div>
 
-  {% if row.sales_drivers %}
-  <div class="text-xs text-stone-500 mb-2">Sales drivers (60-day velocity):</div>
-  <ul class="flex flex-wrap gap-2">
-    {% for sku, qty in row.sales_drivers %}
-    <li class="rounded-md bg-stone-100 px-2 py-1 text-xs">
-      <span class="font-medium">{{ sku }}</span>
-      <span class="text-stone-500"> {{ qty }}/day</span>
-    </li>
-    {% endfor %}
-  </ul>
+  {# ── Stock timeline visual ────────────────────────────────────────────────── #}
+  {% if row.days_of_stock < 9999 and row.item.sea_lead_days %}
+  <div class="bg-white border-t border-stone-200 px-5 py-4">
+    <div class="text-xs text-stone-400 uppercase tracking-wide mb-3">Stock Timeline</div>
+    <div class="relative">
+      {# Track #}
+      <div class="h-3 bg-stone-100 rounded-full overflow-hidden w-full">
+        {% set stock_days = row.days_of_stock | int %}
+        {% set lead_days = row.item.sea_lead_days | int %}
+        {% set timeline_max = [stock_days, lead_days + 14, 90] | max %}
+        {% set stock_pct = ([stock_days, timeline_max] | min / timeline_max * 100) | int %}
+        {% set lead_pct = ([lead_days, timeline_max] | min / timeline_max * 100) | int %}
+
+        {# Lead time zone (soft gray overlay intent) #}
+        <div class="h-full rounded-full
+          {% if stock_days <= lead_days %}bg-red-500
+          {% elif stock_days <= lead_days + 14 %}bg-amber-400
+          {% else %}bg-green-400{% endif %}"
+             style="width: {{ stock_pct }}%"></div>
+      </div>
+
+      {# Lead time marker line #}
+      {% set lead_pct_pos = ([lead_days, timeline_max] | min / timeline_max * 100) | int %}
+      <div class="absolute top-0 bottom-0 w-px bg-stone-400"
+           style="left: {{ lead_pct_pos }}%"></div>
+
+      <div class="flex justify-between mt-1.5 text-xs text-stone-400">
+        <span>Today</span>
+        <span class="absolute text-stone-500 font-medium" style="left: {{ lead_pct_pos }}%; transform: translateX(-50%)">
+          Lead {{ lead_days }}d
+        </span>
+        <span>{{ timeline_max }}d</span>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4 mt-3 text-xs text-stone-500">
+      <div class="flex items-center gap-1.5">
+        <div class="size-2 rounded-full
+          {% if stock_days <= lead_days %}bg-red-500
+          {% elif stock_days <= lead_days + 14 %}bg-amber-400
+          {% else %}bg-green-400{% endif %}"></div>
+        Stock runs out in <strong>{{ stock_days }}d</strong>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <div class="size-2 rounded-full bg-stone-400"></div>
+        Sea lead time: <strong>{{ lead_days }}d</strong>
+      </div>
+      {% if stock_days > lead_days %}
+      <div class="text-green-600 font-medium">{{ (stock_days - lead_days) }}d buffer</div>
+      {% else %}
+      <div class="text-red-600 font-semibold">{{ (lead_days - stock_days) }}d overdue — order immediately</div>
+      {% endif %}
+    </div>
+  </div>
   {% endif %}
+
+  {# ── Suggested qty row ───────────────────────────────────────────────────── #}
+  {% if row.suggested_qty > 0 %}
+  <div class="bg-stone-50 border-t border-stone-200 px-5 py-3 flex items-center justify-between">
+    <div class="text-xs text-stone-500">
+      Suggested order quantity:
+      <strong class="text-stone-800 text-sm ml-1">{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}</strong>
+    </div>
+    <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
+       class="text-xs text-stone-500 hover:text-stone-800 transition-colors">
+      Use this qty →
+    </a>
+  </div>
+  {% endif %}
+
+  {# ── Sales drivers ────────────────────────────────────────────────────────── #}
+  {% if row.sales_drivers %}
+  <div class="bg-white border-t border-stone-200 px-5 py-4">
+    <div class="text-xs text-stone-400 uppercase tracking-wide mb-2.5">Sales drivers (60-day velocity)</div>
+    <ul class="flex flex-wrap gap-2">
+      {% for sku, qty in row.sales_drivers %}
+      <li class="rounded-lg bg-stone-100 border border-stone-200 px-2.5 py-1.5 text-xs flex items-center gap-1.5">
+        <span class="font-semibold text-stone-700">{{ sku }}</span>
+        <span class="text-stone-400 tabular-nums">{{ qty }}/day</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
 </div>
