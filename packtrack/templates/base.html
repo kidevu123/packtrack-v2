@@ -76,8 +76,9 @@
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="{{ CHROME_WIDTH }} mx-auto px-4 py-8 text-xs text-stone-400">
-    PackTrack v{{ app_version }}
+  <footer class="{{ CHROME_WIDTH }} mx-auto px-4 py-8 text-xs text-stone-400 flex items-center justify-between gap-4 flex-wrap">
+    <span>PackTrack v{{ app_version }}{% if git_sha %} · <a href="https://github.com/kidevu123/packtrack-v2/commit/{{ git_sha }}" target="_blank" rel="noopener" class="hover:text-stone-600 transition-colors font-mono">{{ git_sha }}</a>{% endif %}</span>
+    <span>Made with <span class="text-red-400">♥</span> by Haute Tech</span>
   </footer>
 </body>
 </html>

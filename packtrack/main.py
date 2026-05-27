@@ -6,6 +6,7 @@ route handlers import it (avoids circular imports with main).
 from __future__ import annotations
 
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -28,6 +29,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.globals["app_version"] = __version__
+
+try:
+    _git_sha = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=str(BASE_DIR.parent),
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ).strip()
+except Exception:
+    _git_sha = ""
+templates.env.globals["git_sha"] = _git_sha
 
 
 def _qty(value) -> str:
