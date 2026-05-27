@@ -10,6 +10,7 @@
     <a href="/inventory.csv" class="text-stone-500 hover:text-stone-900">Export CSV</a>
     {% if user.role.value == 'owner' %}
       <a href="/admin/sync" class="text-stone-500 hover:text-stone-900">Sync now →</a>
+      <a href="/inventory/forecast" class="text-stone-500 hover:text-stone-900 hidden sm:inline">Forecast →</a>
     {% endif %}
   </div>
 </div>
@@ -24,7 +25,7 @@
     {% include "_partials/inventory_row.html" %}
   {% else %}
     <li class="p-8 text-center text-sm text-stone-500">
-      No items yet. Sync Zoho from <a href="/admin/sync" class="text-blue-600">Admin → Sync</a>.
+      No items yet. Go to <a href="/admin/sync" class="text-blue-600">Settings → Sync</a> to pull from Zoho.
     </li>
   {% endfor %}
 </ul>

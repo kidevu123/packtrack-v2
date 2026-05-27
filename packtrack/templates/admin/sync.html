@@ -1,29 +1,35 @@
 {% extends "base.html" %}
-{% block title %}Sync · Admin · PackTrack{% endblock %}
+{% block title %}Sync · Settings · PackTrack{% endblock %}
 {% block head %}
   {% set any_running = runs and runs[0].status == 'running' %}
-  {% if any_running %}
-    <meta http-equiv="refresh" content="4">
-  {% endif %}
+  {% if any_running %}<meta http-equiv="refresh" content="4">{% endif %}
 {% endblock %}
+{% block container_class %}max-w-3xl{% endblock %}
 {% block content %}
-<nav class="flex items-center gap-4 text-sm mb-6">
-  <a href="/admin/users" class="text-stone-500 hover:text-stone-900">Users</a>
-  <a href="/admin/settings" class="text-stone-500 hover:text-stone-900">Settings</a>
-  <a href="/admin/sync" class="text-stone-900 font-medium">Sync</a>
-</nav>
+
+{# ── Settings sub-nav ──────────────────────────────────────────────────────── #}
+{% set _path = request.url.path %}
+<div class="flex items-center gap-1 mb-8 border-b border-stone-200 pb-0 -mt-1">
+  {% for href, label in [('/admin/users', 'Users'), ('/admin/settings', 'Settings'), ('/admin/sync', 'Sync')] %}
+    <a href="{{ href }}"
+       class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors
+              {{ 'border-stone-900 text-stone-900' if _path == href else 'border-transparent text-stone-500 hover:text-stone-800 hover:border-stone-300' }}">
+      {{ label }}
+    </a>
+  {% endfor %}
+</div>
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <div>
-    <h1 class="text-2xl font-semibold">Zoho sync</h1>
-    <p class="text-sm text-stone-500 mt-1">
+    <h1 class="text-xl font-semibold">Zoho sync</h1>
+    <p class="text-sm text-stone-400 mt-0.5">
       {% if gateway_configured %}
         Auto-syncs every 30 minutes.
         {% if not zoho_configured %}
-          <span class="text-amber-600">Zoho push not configured (read-only).</span>
+          <span class="text-amber-600">Zoho push not configured — read-only mode.</span>
         {% endif %}
       {% else %}
-        Gateway not configured. Add <code class="bg-stone-100 px-1 rounded text-xs font-mono">ZOHO_GATEWAY_URL</code> / <code class="bg-stone-100 px-1 rounded text-xs font-mono">ZOHO_GATEWAY_TOKEN</code> to <code class="bg-stone-100 px-1 rounded text-xs font-mono">/etc/packtrack/packtrack.env</code> and restart.
+        Gateway not configured. Add <code class="bg-stone-100 px-1 py-0.5 rounded text-xs font-mono text-stone-700">ZOHO_GATEWAY_URL</code> and <code class="bg-stone-100 px-1 py-0.5 rounded text-xs font-mono text-stone-700">ZOHO_GATEWAY_TOKEN</code> to <code class="bg-stone-100 px-1 py-0.5 rounded text-xs font-mono text-stone-700">/etc/packtrack/packtrack.env</code> and restart.
       {% endif %}
     </p>
   </div>
@@ -36,12 +42,12 @@
           class="shrink-0">
       <button type="submit"
               :disabled="loading"
-              class="inline-flex items-center gap-2 rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium hover:bg-stone-700 active:bg-stone-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
-        <svg x-show="loading" class="size-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+              class="inline-flex items-center gap-2 rounded-xl bg-stone-900 text-white px-4 py-2.5 text-sm font-semibold hover:bg-stone-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        <svg x-show="loading" class="size-4 animate-spin" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
         </svg>
-        <svg x-show="!loading" class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg x-show="!loading" class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
         <span x-text="loading ? 'Syncing…' : 'Sync now'">{% if any_running %}Syncing…{% else %}Sync now{% endif %}</span>
@@ -50,20 +56,21 @@
   {% endif %}
 </div>
 
+{# Latest run status banner #}
 {% if runs %}
   {% set latest = runs[0] %}
-  <div class="mb-5 p-4 rounded-xl border
+  <div class="mb-5 rounded-2xl border px-5 py-4 shadow-sm
     {% if latest.status == 'ok' %}border-emerald-200 bg-emerald-50
     {% elif latest.status == 'error' %}border-red-200 bg-red-50
     {% else %}border-amber-200 bg-amber-50{% endif %}">
     <div class="flex items-center justify-between gap-4">
-      <p class="text-sm font-medium
+      <p class="text-sm font-semibold
         {% if latest.status == 'ok' %}text-emerald-800
         {% elif latest.status == 'error' %}text-red-800
         {% else %}text-amber-800{% endif %}">
         {% if latest.status == 'ok' %}Last sync successful
         {% elif latest.status == 'error' %}Last sync failed
-        {% else %}Sync in progress… (page refreshes automatically){% endif %}
+        {% else %}Sync in progress — page refreshes automatically{% endif %}
       </p>
       <span class="text-xs text-stone-500 shrink-0">{{ latest.started_at.strftime('%b %-d, %Y · %H:%M UTC') }}</span>
     </div>
@@ -77,16 +84,15 @@
   </div>
 {% endif %}
 
-<div class="bg-white rounded-xl border border-stone-200 overflow-hidden">
-  <div class="px-4 py-3 border-b border-stone-100 flex items-center justify-between">
-    <h2 class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Recent runs</h2>
-    {% if runs %}
-      <span class="text-xs text-stone-400">Last {{ runs|length }}</span>
-    {% endif %}
+{# Run history #}
+<div class="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden">
+  <div class="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+    <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Run history</p>
+    {% if runs %}<span class="text-xs text-stone-400">Last {{ runs|length }}</span>{% endif %}
   </div>
-  <ul class="divide-y divide-stone-100">
+  <div class="divide-y divide-stone-50">
     {% for run in runs %}
-      <li class="px-4 py-3 flex items-center justify-between gap-4 text-sm">
+      <div class="px-5 py-3 flex items-center justify-between gap-4">
         <div class="flex items-center gap-3 min-w-0">
           <span class="size-2 rounded-full shrink-0
             {% if run.status == 'ok' %}bg-emerald-500
@@ -94,14 +100,12 @@
             {% else %}bg-amber-400 animate-pulse{% endif %}">
           </span>
           <div class="min-w-0">
-            <span class="text-stone-800 tabular-nums">{{ run.started_at.strftime('%b %-d · %H:%M:%S') }}</span>
+            <span class="text-sm text-stone-700 tabular-nums">{{ run.started_at.strftime('%b %-d · %H:%M:%S') }}</span>
             {% if run.status == 'ok' %}
-              <span class="ml-2 text-xs text-stone-400">
-                {{ run.items_updated }}u · {{ run.items_created }}c · {{ run.po_mirrored }} POs
-              </span>
+              <span class="ml-2 text-xs text-stone-400">{{ run.items_updated }}u · {{ run.items_created }}c · {{ run.po_mirrored }} POs</span>
             {% elif run.error_message %}
-              <span class="ml-2 text-xs text-red-500 font-mono truncate max-w-sm inline-block align-bottom">
-                {{ run.error_message[:100] }}{% if run.error_message|length > 100 %}…{% endif %}
+              <span class="ml-2 text-xs text-red-500 font-mono truncate max-w-xs inline-block align-bottom">
+                {{ run.error_message[:80] }}{% if run.error_message|length > 80 %}…{% endif %}
               </span>
             {% endif %}
           </div>
@@ -111,17 +115,18 @@
             {% set dur = (run.finished_at - run.started_at).total_seconds()|int %}
             <span class="text-xs text-stone-400 tabular-nums">{{ dur }}s</span>
           {% endif %}
-          <span class="text-xs font-medium
+          <span class="text-xs font-semibold
             {% if run.status == 'ok' %}text-emerald-600
             {% elif run.status == 'error' %}text-red-600
             {% else %}text-amber-600{% endif %}">
             {{ run.status }}
           </span>
         </div>
-      </li>
+      </div>
     {% else %}
-      <li class="px-4 py-10 text-center text-sm text-stone-400">No sync runs yet.</li>
+      <div class="px-5 py-12 text-center text-sm text-stone-400">No sync runs yet.</div>
     {% endfor %}
-  </ul>
+  </div>
 </div>
+
 {% endblock %}

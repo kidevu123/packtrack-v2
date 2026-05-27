@@ -1,12 +1,10 @@
 <!doctype html>
 {# Per-page MAIN content width. Override with:
-     {% block container_class %}max-w-7xl{% endblock %}
-   The header and footer use a separate, CONSTANT width (CHROME_WIDTH below)
-   so the logo + nav don't horizontally shift between page loads. Header
-   variability across pages was the source of cumulative layout shift. #}
+     {% block container_class %}max-w-7xl{% endblock %} #}
 <!--{% block container_class %}max-w-6xl{% endblock %}-->
 {% set container_class = self.container_class()|trim %}
 {% set CHROME_WIDTH = 'max-w-[1600px]' %}
+{% set _path = request.url.path %}
 <html lang="en" class="h-full bg-stone-50">
 <head>
   <meta charset="utf-8" />
@@ -22,46 +20,71 @@
 <body class="h-full text-stone-900 antialiased">
   {% if user %}
     <header class="bg-white border-b border-stone-200 sticky top-0 z-10">
-      <div class="{{ CHROME_WIDTH }} mx-auto px-4 h-14 flex items-center gap-4">
-        <a href="/" class="flex items-center gap-2 font-medium shrink-0">
-          <span class="size-7 rounded-md bg-stone-900 text-white grid place-items-center text-xs">PT</span>
-          <span class="hidden sm:inline">PackTrack</span>
+      <div class="{{ CHROME_WIDTH }} mx-auto px-4 h-14 flex items-center gap-5">
+
+        {# Logo #}
+        <a href="/" class="flex items-center gap-2 font-semibold shrink-0 text-stone-900">
+          <span class="size-7 rounded-md bg-stone-900 text-white grid place-items-center text-xs font-bold">PT</span>
+          <span class="hidden sm:inline tracking-tight">PackTrack</span>
         </a>
 
-        <form method="get" action="/search" class="flex-1 max-w-md">
+        {# Search #}
+        <form method="get" action="/search" class="flex-1 max-w-xs">
           <div class="relative">
-            <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none">
               <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
             </svg>
-            <input id="nav-search" name="q" type="search" placeholder="Search…  /"
-                   class="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border-stone-200 bg-stone-50 focus:bg-white focus:border-stone-400 focus:ring-stone-400" />
+            <input id="nav-search" name="q" type="search" placeholder="Search…"
+                   class="w-full pl-8 pr-3 py-1.5 text-sm rounded-lg border-stone-200 bg-stone-50 focus:bg-white focus:border-stone-400 focus:ring-0 placeholder:text-stone-400" />
           </div>
         </form>
 
-        <nav class="flex items-center gap-3 text-sm shrink-0">
+        {# Nav #}
+        <nav class="flex items-center gap-0.5 text-sm shrink-0 ml-auto">
+
+          {# Vendor scope pill #}
           {% set _vs = request.state.vendor_scope if request.state is defined and request.state.vendor_scope is defined else '' %}
           {% if _vs %}
-            <a href="/admin/settings" title="Filtered to a single vendor — click to change"
-               class="hidden md:inline-flex items-center gap-1 rounded-full bg-stone-900 text-white px-2.5 py-0.5 text-[11px] font-medium hover:bg-stone-700">
+            <a href="/admin/settings" title="Scoped to {{ _vs }} — click to change"
+               class="hidden md:inline-flex items-center gap-1 rounded-full bg-stone-900 text-white px-2.5 py-0.5 text-[11px] font-medium hover:bg-stone-700 mr-2">
               <svg viewBox="0 0 20 20" fill="currentColor" class="size-3"><path fill-rule="evenodd" d="M3 4.5a1 1 0 011-1h12a1 1 0 011 1v1.586a1 1 0 01-.293.707L12 11.5V16l-4-2v-2.5L3.293 6.793A1 1 0 013 6.086V4.5z" clip-rule="evenodd"/></svg>
               {{ _vs }}
             </a>
           {% endif %}
-          <a href="/po" class="text-stone-600 hover:text-stone-900">Pipeline</a>
-          <a href="/inventory" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Inventory</a>
-          <a href="/inventory/forecast" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Forecast</a>
+
+          {% macro navlink(href, label, match) %}
+            <a href="{{ href }}"
+               class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors
+                      {{ 'bg-stone-100 text-stone-900' if match else 'text-stone-500 hover:text-stone-900 hover:bg-stone-50' }}">
+              {{ label }}
+            </a>
+          {% endmacro %}
+
+          {{ navlink('/po', 'Pipeline', _path.startswith('/po')) }}
+          <span class="hidden sm:contents">
+            {{ navlink('/inventory', 'Inventory', _path == '/inventory' or _path == '/inventory.csv') }}
+            {{ navlink('/inventory/forecast', 'Forecast', _path.startswith('/inventory/forecast')) }}
+          </span>
           {% if user.role.value in ('owner', 'receiving') %}
-            <a href="/receive" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Receiving</a>
+            <span class="hidden sm:contents">
+              {{ navlink('/receive', 'Receiving', _path.startswith('/receive')) }}
+            </span>
           {% endif %}
           {% if user.role.value == 'owner' %}
-            <a href="/admin/users" class="text-stone-600 hover:text-stone-900 hidden sm:inline">Admin</a>
+            <span class="hidden sm:contents">
+              {{ navlink('/admin/settings', 'Settings', _path.startswith('/admin')) }}
+            </span>
           {% endif %}
-          <a href="/logout" class="text-stone-500 hover:text-stone-900">Sign out</a>
+
+          {# Sign out — separate, softer #}
+          <a href="/logout"
+             class="ml-1 px-3 py-1.5 rounded-lg text-sm text-stone-400 hover:text-stone-900 hover:bg-stone-50 transition-colors">
+            Sign out
+          </a>
         </nav>
       </div>
     </header>
     <script>
-      // "/" focuses the search input — common operator pattern.
       document.addEventListener('keydown', (e) => {
         if (e.key !== '/') return;
         const t = e.target;
