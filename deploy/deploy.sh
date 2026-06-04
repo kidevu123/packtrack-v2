@@ -49,7 +49,7 @@ preflight_local() {
 make_bundle() {
   local bundle
   bundle="$(mktemp -t packtrack-src.XXXXXX.tgz)"
-  tar \
+  COPYFILE_DISABLE=1 tar \
     --exclude='./.git' \
     --exclude='./.venv' \
     --exclude='./.ruff_cache' \
@@ -58,6 +58,8 @@ make_bundle() {
     --exclude='./uploads' \
     --exclude='./logs' \
     --exclude='./tailwindcss' \
+    --exclude='._*' \
+    --exclude='.DS_Store' \
     --exclude='*.pyc' \
     -czf "$bundle" .
   echo "$bundle"
