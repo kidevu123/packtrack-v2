@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from math import ceil
 
 from sqlmodel import Session, col, desc, select
 
@@ -19,12 +18,12 @@ from packtrack.models import (
     POStatus,
     PurchaseOrder,
     Role,
-    ShipMethod,
-    ShipStatus,
     Shipment,
+    ShipStatus,
     User,
 )
 from packtrack.services.inbox import InboxItem, build_inbox
+from packtrack.services.inventory import suggested_reorder_qty
 from packtrack.services.scope import (
     filter_items_query,
     filter_pos_query,
@@ -248,20 +247,6 @@ def build_pipeline(
 # ---------------------------------------------------------------------------
 
 
-def _suggested_reorder_qty(item: Item, buffer_days: int = 14) -> int:
-    """Cover sea_lead_days + buffer at current daily usage. If no usage rate,
-    fall back to 2× reorder_point to give a sane default."""
-    if item.daily_usage_rate and item.daily_usage_rate > 0:
-        days = max(item.sea_lead_days or 45, 30) + buffer_days
-        target_stock = item.daily_usage_rate * days
-        gap = max(0.0, target_stock - max(item.current_stock, 0))
-        if gap > 0:
-            return int(ceil(gap))
-    if item.reorder_point and item.reorder_point > 0:
-        return int(ceil(item.reorder_point * 2))
-    return 100
-
-
 def build_stock_alerts(session: Session) -> list[StockAlert]:
     stmt = filter_items_query(select(Item), get_scope(session))
     items = session.exec(stmt).all()
@@ -284,7 +269,7 @@ def build_stock_alerts(session: Session) -> list[StockAlert]:
             item=it,
             severity=severity,
             days_left=round(days_left, 1) if days_left is not None else None,
-            suggested_qty=_suggested_reorder_qty(it),
+            suggested_qty=suggested_reorder_qty(it),
         ))
     alerts.sort(key=lambda a: (0 if a.severity == "critical" else 1,
                                a.days_left if a.days_left is not None else 9999))

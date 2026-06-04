@@ -5,7 +5,6 @@ calls into ``services.workflow.allowed_move`` so role rules can't drift.
 """
 from __future__ import annotations
 
-import os
 import shutil
 import uuid
 from datetime import date, datetime
@@ -30,15 +29,14 @@ from packtrack.deps import require_user
 from packtrack.models import (
     Attachment,
     AttachmentKind,
-    BoxReceipt,
     Item,
     POEvent,
     POLine,
     POStatus,
     PurchaseOrder,
     Role,
-    ShipMethod,
     Shipment,
+    ShipMethod,
     ShipStatus,
     Urgency,
     User,
@@ -167,6 +165,7 @@ async def create_po(
     urgency = form.get("urgency", "normal")
     notes = form.get("notes", "")
     currency = (form.get("currency") or "USD").upper()[:10]
+    submit_action = (form.get("submit_action") or "design_review").strip()
     item_ids = form.getlist("item_id[]")
     quantities = form.getlist("quantity[]")
     prices = form.getlist("unit_price[]")
@@ -177,7 +176,7 @@ async def create_po(
 
     po = PurchaseOrder(
         po_number=_next_po_number(session),
-        status=POStatus.DESIGN_REVIEW,
+        status=POStatus.DRAFT if submit_action == "draft" else POStatus.DESIGN_REVIEW,
         urgency=Urgency(urgency),
         notes=notes or None,
         currency=currency,
@@ -222,7 +221,8 @@ async def create_po(
     if settings.zoho_configured:
         zoho.push_po(session, po)
 
-    notify(session, "po.created", po, actor=user)
+    if po.status == POStatus.DESIGN_REVIEW:
+        notify(session, "po.created", po, actor=user)
     return RedirectResponse(url=f"/po/{po.id}", status_code=303)
 
 
@@ -284,8 +284,9 @@ async def move_status(
     Both forms route through ``allowed_move`` so role rules can't drift.
     Returns JSON for HTMX/board callers, redirects for plain HTML POSTs.
     """
-    from packtrack.services.dashboard import COLUMN_TARGET_STATUS
     from fastapi.responses import JSONResponse
+
+    from packtrack.services.dashboard import COLUMN_TARGET_STATUS
 
     po = session.get(PurchaseOrder, po_id)
     if po is None:
@@ -301,7 +302,7 @@ async def move_status(
         try:
             target_status = POStatus(target)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid status")
+            raise HTTPException(status_code=400, detail="Invalid status") from None
     elif column:
         target_status = COLUMN_TARGET_STATUS.get(column)
         if target_status is None:
@@ -366,6 +367,7 @@ def po_csv(
     """All POs as CSV — for finance / spreadsheet exports."""
     import csv
     from io import StringIO
+
     from fastapi.responses import StreamingResponse
 
     pos = session.exec(
@@ -758,7 +760,7 @@ def add_box_receipt(
         try:
             counted_val = float(counted_str)
         except ValueError:
-            raise HTTPException(status_code=400, detail="counted_quantity must be a number.")
+            raise HTTPException(status_code=400, detail="counted_quantity must be a number.") from None
 
     try:
         row = create_box_receipt(
@@ -775,7 +777,7 @@ def add_box_receipt(
             shipment_id=shipment_id,
         )
     except BoxReceiptError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     _log(
         session, po, "received",

@@ -27,9 +27,13 @@ _token_cache: dict[str, object] = {"token": None, "expires_at": None}
 
 
 def _get_access_token(force: bool = False) -> str:
-    if not force and _token_cache["token"] and _token_cache["expires_at"]:
-        if datetime.utcnow() < _token_cache["expires_at"]:  # type: ignore[operator]
-            return _token_cache["token"]  # type: ignore[return-value]
+    if (
+        not force
+        and _token_cache["token"]
+        and _token_cache["expires_at"]
+        and datetime.utcnow() < _token_cache["expires_at"]  # type: ignore[operator]
+    ):
+        return _token_cache["token"]  # type: ignore[return-value]
     if not settings.zoho_configured:
         raise RuntimeError("Zoho is not configured.")
     with httpx.Client(timeout=60.0) as client:

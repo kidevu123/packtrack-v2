@@ -30,7 +30,7 @@ bash deploy/deploy.sh                # subsequent updates
 
 The deploy script:
 
-1. rsyncs source to `192.168.1.206:/opt/packtrack/app`.
+1. Stages source through Proxmox `192.168.1.190` into LXC `200`.
 2. Ensures `/opt/packtrack/app/.venv`, installs deps.
 3. Builds Tailwind CSS on the host.
 4. Runs Alembic migrations.
@@ -41,8 +41,10 @@ The deploy script:
 After first deploy:
 
 ```bash
-ssh root@192.168.1.206 "sudo -u packtrack bash -lc 'cd /opt/packtrack/app && . .venv/bin/activate && python scripts/seed_owner.py'"
+ssh root@192.168.1.190 "pct exec 200 -- sudo -u packtrack bash -lc 'cd /opt/packtrack/app && . .venv/bin/activate && set -a && source /etc/packtrack/packtrack.env && set +a && python scripts/seed_owner.py'"
 ```
+
+See `docs/DEPLOYMENT.md` and `docs/RUNBOOK.md` for the production runbook.
 
 ## Configuration
 

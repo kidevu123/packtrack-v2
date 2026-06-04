@@ -35,7 +35,14 @@ packages = ["packtrack"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["migrations"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "B008",   # FastAPI dependency defaults intentionally call Depends/Form/File.
+    "E501",   # Templates and long operator messages are more readable unwrapped.
+    "N818",   # Domain exception names predate the lint rule.
+    "RUF002", # Operator-facing copy uses typographic symbols in a few places.
+    "RUF003",
+]

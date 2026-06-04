@@ -93,9 +93,16 @@
     </label>
   </section>
 
-  <button class="w-full rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
-    Create PO and send to design review
-  </button>
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <button name="submit_action" value="draft"
+            class="rounded-xl border border-stone-300 bg-white text-stone-800 py-3 font-medium hover:bg-stone-50">
+      Save draft
+    </button>
+    <button name="submit_action" value="design_review"
+            class="rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
+      Create PO and send to design review
+    </button>
+  </div>
 </form>
 
 <script>

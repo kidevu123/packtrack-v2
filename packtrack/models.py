@@ -6,7 +6,6 @@ those structures without parsing TEXT columns at the application layer.
 """
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Optional
 
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -271,7 +270,7 @@ class POEvent(SQLModel, table=True):
     kind: str = Field(max_length=40)  # status_change | comment | attachment | sync | system
     message: str
     actor_id: int | None = Field(default=None, foreign_key="users.id")
-    payload: dict | None = Field(default=None, sa_column=Column(JSONB))
+    payload: dict | None = Field(default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite")))
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
     po: PurchaseOrder = Relationship(back_populates="events")
@@ -382,10 +381,10 @@ class BoxReceipt(SQLModel, table=True):
 
     luma_push_status: LumaPushStatus = Field(default=LumaPushStatus.PENDING)
     luma_pushed_at: datetime | None = None
-    luma_response: dict | None = Field(default=None, sa_column=Column(JSONB))
+    luma_response: dict | None = Field(default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite")))
 
     # List of filenames under uploads/receiving/ — stored at receive time.
-    photo_paths: list[str] | None = Field(default=None, sa_column=Column(JSONB))
+    photo_paths: list[str] | None = Field(default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite")))
 
     notes: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -437,7 +436,7 @@ class ZohoMirror(SQLModel, table=True):
     delivery_date: str | None = Field(default=None, max_length=30)
     total: float | None = None
     currency_code: str | None = Field(default=None, max_length=10)
-    line_items: list[dict] | None = Field(default=None, sa_column=Column(JSONB))
+    line_items: list[dict] | None = Field(default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite")))
     synced_at: datetime = Field(default_factory=datetime.utcnow)
 
 

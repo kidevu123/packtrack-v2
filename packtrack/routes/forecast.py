@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
+from sqlmodel import Session
 
 from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import User
 from packtrack.services.forecast import compute_forecast
-from sqlmodel import Session
 
 router = APIRouter()
 

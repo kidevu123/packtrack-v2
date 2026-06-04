@@ -20,12 +20,10 @@ from datetime import datetime
 
 from sqlmodel import Session, col, select
 
-from packtrack.config import settings
 from packtrack.models import (
     BoxReceipt,
     Confidence,
     Item,
-    LumaPushStatus,
     POEvent,
     POStatus,
     PurchaseOrder,
@@ -34,7 +32,7 @@ from packtrack.models import (
     ZohoMirror,
 )
 from packtrack.services.box_receipt import compute_luma_readiness
-from packtrack.services.receiving import adopt_zoho_po, ensure_material_code, push_luma_receipt
+from packtrack.services.receiving import adopt_zoho_po, ensure_material_code
 
 logger = logging.getLogger("packtrack.receive_catchup")
 

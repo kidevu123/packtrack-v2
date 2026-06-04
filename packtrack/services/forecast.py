@@ -21,7 +21,7 @@ import httpx
 from sqlmodel import Session, func, select
 
 from packtrack.config import settings
-from packtrack.models import Item, MaterialConsumptionEvent, SalesEvent
+from packtrack.models import Item, SalesEvent
 
 logger = logging.getLogger("packtrack.forecast")
 

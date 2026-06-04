@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from sqlmodel import Session, select
 
 from packtrack.models import PurchaseOrder, Role, User
+
+if TYPE_CHECKING:
+    from packtrack.models import Item
+    from packtrack.services.forecast import ForecastRow
 
 logger = logging.getLogger("packtrack.notify")
 
@@ -67,12 +71,11 @@ def notify(session: Session, event: str, po: PurchaseOrder, **ctx) -> None:
             logger.exception("Notification handler %s failed for %s", handler.__name__, event)
 
 
-def notify_stock_alert(session: Session, item: "Item", alert_type: str) -> None:
+def notify_stock_alert(session: Session, item: Item, alert_type: str) -> None:
     """Send Telegram stock alert to all active owners when a threshold is crossed.
 
     alert_type: 'reorder' or 'critical'. Never raises.
     """
-    from packtrack.models import Item as _Item  # avoid circular at module level
     from packtrack.telegram import send
 
     owners = list(
@@ -110,13 +113,12 @@ def notify_stock_alert(session: Session, item: "Item", alert_type: str) -> None:
             )
 
 
-def notify_forecast_alert(session: Session, row: "ForecastRow") -> None:
+def notify_forecast_alert(session: Session, row: ForecastRow) -> None:
     """Fire once per restock cycle when reorder_by_sea enters the 7-day window.
 
     Deduplication: skips if current_stock hasn't risen meaningfully since last alert.
     Never raises.
     """
-    from packtrack.services.forecast import ForecastRow  # avoid circular at module level
     from packtrack.telegram import send
 
     item = row.item

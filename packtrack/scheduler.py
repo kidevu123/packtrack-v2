@@ -5,23 +5,56 @@ In-process scheduler. Single instance. No queue, no workers, no Redis.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlmodel import Session
 
 from packtrack.config import settings
 from packtrack.db import engine
 from packtrack.models import SyncRun
-from sqlmodel import Session
 
 logger = logging.getLogger("packtrack.scheduler")
 _scheduler: BackgroundScheduler | None = None
 
 
+@contextmanager
+def _job_lock(name: str):
+    """Best-effort interprocess lock for APScheduler jobs.
+
+    The app is deployed as a single uvicorn worker, but this protects Zoho and
+    retry jobs from double-running if someone starts a second process.
+    """
+    import fcntl
+
+    settings.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    path = Path(settings.LOG_DIR) / f"{name}.lock"
+    with path.open("w") as fh:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info("Skipping %s; another scheduler process holds the lock", name)
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def _zoho_sync_job() -> None:
     if not settings.gateway_configured:
         return
+    with _job_lock("zoho-sync") as locked:
+        if not locked:
+            return
+        _run_zoho_sync_job()
+
+
+def _run_zoho_sync_job() -> None:
     from packtrack import zoho
 
     with Session(engine) as session:
@@ -57,6 +90,13 @@ def _zoho_sync_job() -> None:
 def _push_retry_job() -> None:
     if not settings.zoho_configured:
         return
+    with _job_lock("push-retry") as locked:
+        if not locked:
+            return
+        _run_push_retry_job()
+
+
+def _run_push_retry_job() -> None:
     from packtrack import zoho
 
     with Session(engine) as session:

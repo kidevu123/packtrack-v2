@@ -12,9 +12,9 @@ If that turns out to be too generous in production, narrow the matcher in
 """
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
-from sqlmodel import Session, col, or_, select
+from sqlmodel import Session, col, select
 
 from packtrack.models import AppSetting, Item, POLine, PurchaseOrder
 

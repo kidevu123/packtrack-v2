@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import shutil
 import uuid
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import or_
 from sqlmodel import Session, select
@@ -16,17 +17,19 @@ from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import (
     BoxReceipt,
-    Confidence,
     Item,
     LumaPushStatus,
     POEvent,
-    POStatus,
     PurchaseOrder,
     Role,
     User,
     ZohoMirror,
 )
-from packtrack.services.box_receipt import compute_accepted, compute_confidence, compute_luma_readiness
+from packtrack.services.box_receipt import (
+    compute_accepted,
+    compute_confidence,
+    compute_luma_readiness,
+)
 from packtrack.services.receiving import (
     adopt_zoho_po,
     build_photo_url,
@@ -211,10 +214,8 @@ async def submit_receiving(
         counted_str = (form.get(f"counted_{zid}") or "").strip()
         counted: float | None = None
         if counted_str:
-            try:
+            with suppress(ValueError):
                 counted = float(counted_str)
-            except ValueError:
-                pass
 
         lot_number = (form.get(f"lot_{zid}") or "").strip() or None
         photo_file = form.get(f"photo_{zid}")

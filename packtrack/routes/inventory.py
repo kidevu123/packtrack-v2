@@ -3,12 +3,17 @@ from io import StringIO
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, StreamingResponse
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, select
 
 from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import Item, Role, User
-from packtrack.services.scope import filter_items_query, get_scope
+from packtrack.services.inventory import (
+    coverage_for_items,
+    filter_inventory_items,
+    suggested_reorder_qty,
+)
+from packtrack.services.scope import get_scope
 
 router = APIRouter()
 
@@ -17,36 +22,31 @@ router = APIRouter()
 def inventory(
     request: Request,
     q: str | None = None,
+    vendor: str | None = None,
+    stock_status: str | None = None,
+    missing_material_code: bool = False,
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    stmt = (
-        select(Item)
-        .where(
-            or_(
-                Item.material_code.is_not(None),
-                Item.name.contains("[Packaging]"),
-                Item.name.contains("[packaging]"),
-            )
-        )
-        .order_by(Item.name)
+    items = filter_inventory_items(
+        session,
+        q=q,
+        vendor=vendor,
+        stock_status=stock_status,
+        missing_material_code=missing_material_code,
     )
-    stmt = filter_items_query(stmt, get_scope(session))
-    if q:
-        like = f"%{q.lower()}%"
-        stmt = stmt.where(
-            or_(
-                Item.name.ilike(like),
-                Item.sku_code.ilike(like),
-                Item.vendor.ilike(like),
-            )
-        )
-    items = session.exec(stmt).all()
+    coverage = coverage_for_items(session, items)
+    suggested = {it.id: suggested_reorder_qty(it) for it in items}
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "inventory.html",
         {
             "user": user, "items": items, "q": q or "",
+            "vendor": vendor or "",
+            "stock_status": stock_status or "",
+            "missing_material_code": missing_material_code,
+            "coverage": coverage,
+            "suggested": suggested,
             "scope": get_scope(session),
         },
     )
@@ -59,6 +59,8 @@ def edit_item_thresholds(
     reorder_point: float = Form(0),
     critical_point: float = Form(0),
     daily_usage_rate: float = Form(0),
+    material_code: str = Form(""),
+    vendor: str = Form(""),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
@@ -70,6 +72,8 @@ def edit_item_thresholds(
     item.reorder_point = max(0.0, float(reorder_point or 0))
     item.critical_point = max(0.0, float(critical_point or 0))
     item.daily_usage_rate = max(0.0, float(daily_usage_rate or 0))
+    item.material_code = material_code.strip() or None
+    item.vendor = vendor.strip() or None
     item.reorder_point_locked = True  # owner overrode → lock from Zoho overwrite
     session.commit()
     # HTMX swap returns the updated row fragment

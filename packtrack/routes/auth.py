@@ -100,9 +100,6 @@ def sso_start(next: str = "/"):
         "state": signed_state,
     })
 
-    auth_url = settings.OIDC_ISSUER_URL.rstrip("/").replace(
-        "/application/o/", "/application/o/"
-    )
     # Authentik's authorize endpoint is global — the client_id picks the provider
     redirect = RedirectResponse(
         url=f"http://192.168.1.164:9000/application/o/authorize/?{params}",
@@ -151,7 +148,7 @@ def oidc_callback(
     next_url = state_data.get("next", "/") or "/"
 
     # Exchange authorization code for tokens
-    token_url = f"http://192.168.1.164:9000/application/o/token/"
+    token_url = "http://192.168.1.164:9000/application/o/token/"
     try:
         with httpx.Client(timeout=10.0) as client:
             token_resp = client.post(

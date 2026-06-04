@@ -15,9 +15,22 @@
   </div>
 </div>
 
-<form method="get" class="mb-4">
-  <input name="q" value="{{ q }}" placeholder="Search by name, SKU, or vendor…"
-         class="w-full rounded-xl border-stone-300 text-sm px-4 py-2.5" />
+<form method="get" class="mb-4 grid grid-cols-1 sm:grid-cols-12 gap-2">
+  <input name="q" value="{{ q }}" placeholder="Search by name, SKU, material code, or vendor..."
+         class="sm:col-span-5 rounded-xl border-stone-300 text-sm px-4 py-2.5" />
+  <input name="vendor" value="{{ vendor }}" placeholder="Vendor"
+         class="sm:col-span-3 rounded-xl border-stone-300 text-sm px-4 py-2.5" />
+  <select name="stock_status" class="sm:col-span-2 rounded-xl border-stone-300 text-sm px-3 py-2.5">
+    <option value="">Any stock</option>
+    <option value="critical" {{ 'selected' if stock_status == 'critical' else '' }}>Critical</option>
+    <option value="low" {{ 'selected' if stock_status == 'low' else '' }}>Low / reorder</option>
+    <option value="ok" {{ 'selected' if stock_status == 'ok' else '' }}>OK</option>
+  </select>
+  <label class="sm:col-span-1 inline-flex items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-xs text-stone-600">
+    <input type="checkbox" name="missing_material_code" value="true" {{ 'checked' if missing_material_code else '' }} />
+    Missing
+  </label>
+  <button class="sm:col-span-1 rounded-xl bg-stone-900 text-white text-sm font-medium px-4 py-2.5 hover:bg-stone-800">Filter</button>
 </form>
 
 <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">

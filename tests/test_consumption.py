@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("PACKTRACK_SECRET_KEY", "test-secret")
 
 from datetime import datetime, timedelta
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, create_engine, select
 
 from packtrack.models import Item, MaterialConsumptionEvent, User
 from packtrack.services.consumption import (
@@ -141,8 +142,9 @@ def _client(session: Session):  # -> TestClient
     import os
     os.environ["DATABASE_URL"] = "sqlite:///:memory:"
     from fastapi.testclient import TestClient
-    from packtrack.main import app
+
     from packtrack.db import get_session
+    from packtrack.main import app
     app.dependency_overrides[get_session] = lambda: session
     return TestClient(app, raise_server_exceptions=False)
 

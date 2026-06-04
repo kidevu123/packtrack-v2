@@ -12,16 +12,31 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from packtrack import __version__, scheduler
 # Side-effect: registers the telegram handler with notifications.
-from packtrack import telegram  # noqa: F401
+from packtrack import (
+    __version__,
+    scheduler,
+    telegram,  # noqa: F401
+)
 from packtrack.config import settings
 from packtrack.db import engine
-from packtrack.routes import admin, auth, forecast, inbox, internal, inventory, purchase_orders, receiving, search, telegram_webhook, webhooks
+from packtrack.routes import (
+    admin,
+    auth,
+    forecast,
+    inbox,
+    internal,
+    inventory,
+    purchase_orders,
+    receiving,
+    search,
+    telegram_webhook,
+    webhooks,
+)
 
 logger = logging.getLogger("packtrack")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -116,6 +131,7 @@ async def inject_vendor_scope(request: Request, call_next):
     """Stash ``vendor_scope`` on the request so base.html can show the
     nav-bar pill on every page without each route having to pass it."""
     from sqlmodel import Session
+
     from packtrack.services.scope import get_scope as _get_scope
 
     try:

@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from math import ceil
+
+from sqlmodel import Session, col, or_, select
+
+from packtrack.models import Item, POLine, POStatus, PurchaseOrder, ZohoMirror
+from packtrack.services.scope import filter_items_query, get_scope
+
+
+@dataclass
+class CoverageRow:
+    packtrack_open_qty: float = 0.0
+    zoho_open_qty: float = 0.0
+    packtrack_pos: list[PurchaseOrder] = field(default_factory=list)
+    zoho_pos: list[ZohoMirror] = field(default_factory=list)
+
+    @property
+    def is_covered(self) -> bool:
+        return self.packtrack_open_qty > 0 or self.zoho_open_qty > 0
+
+
+def suggested_reorder_qty(item: Item, buffer_days: int = 14) -> int:
+    """Suggest enough stock to cover sea lead time plus an operating buffer."""
+    if item.daily_usage_rate and item.daily_usage_rate > 0:
+        days = max(item.sea_lead_days or 45, 30) + buffer_days
+        target_stock = item.daily_usage_rate * days
+        gap = max(0.0, target_stock - max(item.current_stock, 0))
+        if gap > 0:
+            return ceil(gap)
+    if item.reorder_point and item.reorder_point > 0:
+        return ceil(item.reorder_point * 2)
+    return 100
+
+
+def filter_inventory_items(
+    session: Session,
+    *,
+    q: str | None = None,
+    vendor: str | None = None,
+    stock_status: str | None = None,
+    missing_material_code: bool = False,
+) -> list[Item]:
+    stmt = select(Item).order_by(Item.name)
+    if not any([missing_material_code, stock_status, vendor, q]):
+        stmt = stmt.where(
+            or_(
+                Item.material_code.is_not(None),
+                Item.name.contains("[Packaging]"),
+                Item.name.contains("[packaging]"),
+            )
+        )
+    stmt = filter_items_query(stmt, get_scope(session))
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Item.name.ilike(like),
+                Item.sku_code.ilike(like),
+                Item.material_code.ilike(like),
+                Item.vendor.ilike(like),
+            )
+        )
+    if vendor:
+        stmt = stmt.where(Item.vendor.ilike(f"%{vendor.strip()}%"))
+    if missing_material_code:
+        stmt = stmt.where(or_(Item.material_code.is_(None), Item.material_code == ""))
+    status = (stock_status or "").strip().lower()
+    if status in {"critical", "low", "ok"}:
+        if status == "critical":
+            stmt = stmt.where(Item.critical_point > 0, Item.current_stock <= Item.critical_point)
+        elif status == "low":
+            stmt = stmt.where(
+                or_(
+                    (Item.critical_point > 0) & (Item.current_stock <= Item.critical_point),
+                    (Item.reorder_point > 0) & (Item.current_stock <= Item.reorder_point),
+                )
+            )
+        else:
+            stmt = stmt.where(
+                or_(Item.reorder_point <= 0, Item.current_stock > Item.reorder_point)
+            )
+    return session.exec(stmt).all()
+
+
+def coverage_for_items(session: Session, items: list[Item]) -> dict[int, CoverageRow]:
+    out = {item.id: CoverageRow() for item in items if item.id is not None}
+    if not out:
+        return out
+
+    rows = session.exec(
+        select(POLine, PurchaseOrder)
+        .join(PurchaseOrder, POLine.po_id == PurchaseOrder.id)
+        .where(col(POLine.item_id).in_(list(out)))
+        .where(col(PurchaseOrder.status).notin_([POStatus.RECEIVED, POStatus.CANCELLED]))
+    ).all()
+    for line, po in rows:
+        row = out.get(line.item_id)
+        if row is None:
+            continue
+        remaining = max(0.0, float(line.quantity or 0) - float(line.received_quantity or 0))
+        row.packtrack_open_qty += remaining
+        if po not in row.packtrack_pos:
+            row.packtrack_pos.append(po)
+
+    by_zoho_id = {
+        str(item.zoho_item_id): item.id
+        for item in items
+        if item.id is not None and item.zoho_item_id
+    }
+    mirrors = session.exec(select(ZohoMirror)).all()
+    for mirror in mirrors:
+        for line in mirror.line_items or []:
+            item_id = by_zoho_id.get(str(line.get("item_id") or ""))
+            if item_id is None or item_id not in out:
+                continue
+            qty = float(line.get("quantity") or 0)
+            received = float(line.get("quantity_received") or 0)
+            remaining = max(0.0, qty - received)
+            if remaining <= 0:
+                continue
+            out[item_id].zoho_open_qty += remaining
+            if mirror not in out[item_id].zoho_pos:
+                out[item_id].zoho_pos.append(mirror)
+    return out

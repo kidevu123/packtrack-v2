@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date
 
 import httpx
 from sqlmodel import Session, select
@@ -19,7 +19,6 @@ from packtrack.config import settings
 from packtrack.models import (
     BoxReceipt,
     Item,
-    LumaPushStatus,
     POEvent,
     POLine,
     POStatus,

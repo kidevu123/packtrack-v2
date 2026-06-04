@@ -53,8 +53,8 @@ async def zoho_sales_webhook(request: Request) -> JSONResponse:
     except ValueError:
         return JSONResponse({"ok": False, "error": f"Invalid sold_at: {sold_at_str}"}, status_code=400)
 
-    from packtrack.models import SalesEvent
     from packtrack.db import engine
+    from packtrack.models import SalesEvent
 
     with Session(engine) as session:
         try:
