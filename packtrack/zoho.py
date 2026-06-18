@@ -349,6 +349,9 @@ def sync_open_pos(session: Session) -> int:
                 "quantity": float(li.get("quantity") or 0),
                 "quantity_received": float(li.get("quantity_received") or 0),
                 "item_id": str(li.get("item_id") or ""),
+                # Needed for zoho-integration-service Pack Track receive calls;
+                # without it the service returns 400 PO_LINE_ITEM_NOT_FOUND.
+                "line_item_id": str(li.get("line_item_id") or ""),
             })
         session.add(ZohoMirror(
             zoho_purchaseorder_id=zid,

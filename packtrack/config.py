@@ -32,6 +32,17 @@ class Settings(BaseSettings):
     ZOHO_GATEWAY_TOKEN: str = ""
     ZOHO_GATEWAY_BRAND: str = ""
 
+    # zoho-integration-service Pack Track receive endpoints. All write paths
+    # for Zoho purchase receives must go through this service — Pack Track
+    # never calls Zoho directly. See docs/PACKTRACK_ZOHO_INTEGRATION_RECEIVES.md.
+    ZOHO_INTEGRATION_BASE_URL: str = ""
+    ZOHO_INTEGRATION_APP_TOKEN: str = ""
+    ZOHO_INTEGRATION_BRAND: str = ""
+    ZOHO_INTEGRATION_TIMEOUT_SECONDS: float = 30.0
+    # Operator off-switch — when False the route logs that the call was
+    # skipped (e.g. during incident or a planned freeze) without raising.
+    ZOHO_INTEGRATION_RECEIVE_ENABLED: bool = True
+
     LUMA_RECEIPT_WEBHOOK_URL: str = ""
     LUMA_PACKTRACK_SECRET: str = ""
 
@@ -65,6 +76,14 @@ class Settings(BaseSettings):
             self.ZOHO_GATEWAY_URL
             and self.ZOHO_GATEWAY_TOKEN
             and self.ZOHO_GATEWAY_BRAND
+        )
+
+    @property
+    def zoho_integration_configured(self) -> bool:
+        return bool(
+            self.ZOHO_INTEGRATION_BASE_URL
+            and self.ZOHO_INTEGRATION_APP_TOKEN
+            and self.ZOHO_INTEGRATION_BRAND
         )
 
     @property

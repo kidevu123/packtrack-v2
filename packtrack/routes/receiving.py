@@ -28,12 +28,13 @@ from packtrack.models import (
 )
 from packtrack.services.box_receipt import compute_accepted, compute_confidence, compute_luma_readiness
 from packtrack.services.receiving import (
+    ZohoReceiveSubmission,
     adopt_zoho_po,
     build_photo_url,
-    create_zoho_receive,
     ensure_material_code,
     push_luma_receipt,
     register_material_with_luma,
+    submit_zoho_receives,
 )
 
 router = APIRouter(prefix="/receive")
@@ -193,7 +194,7 @@ async def submit_receiving(
     zoho_line_item_ids = form.getlist("zoho_line_item_id[]")
 
     results: list[dict] = []
-    push_line_items: list[dict] = []  # for Zoho purchase receive
+    zoho_submissions: list[ZohoReceiveSubmission] = []  # for zoho-integration-service
     po: PurchaseOrder | None = None
     luma_operation_id = str(uuid.uuid4())
 
@@ -297,15 +298,18 @@ async def submit_receiving(
             "luma_ok": luma_ok,
             "luma_err": luma_err,
             "ok": True,
+            "_box_receipt_id": box.id,  # joined to zoho results after submission
         })
 
         zlid = zoho_line_item_ids[i] if i < len(zoho_line_item_ids) else ""
-        push_line_items.append({
-            "zoho_item_id": zid,
-            "zoho_line_item_id": zlid,
-            "quantity": declared,
-            "unit": item.unit,
-        })
+        zoho_submissions.append(ZohoReceiveSubmission(
+            box_receipt_id=box.id,
+            packtrack_receipt_id=box.packtrack_receipt_id,
+            zoho_item_id=zid,
+            zoho_line_item_id=zlid,
+            quantity=declared,
+            item_name=item.name,
+        ))
 
     if po is None:
         raise HTTPException(status_code=400, detail="No lines with a quantity > 0 were submitted.")
@@ -320,15 +324,50 @@ async def submit_receiving(
     ))
     session.commit()
 
-    # Zoho purchase receive (fire-and-forget; failure recorded in session).
-    zoho_ok, zoho_err = create_zoho_receive(mirror, push_line_items, luma_operation_id, global_notes)
-    if not zoho_ok:
+    # Zoho purchase receives — one commit per line via zoho-integration-service.
+    zoho_results = submit_zoho_receives(
+        mirror, zoho_submissions,
+        operator=user, session_id=luma_operation_id, notes=global_notes,
+    )
+    committed = sum(1 for r in zoho_results if r.status == "committed")
+    blocked = sum(1 for r in zoho_results if r.blocked)
+    failed = sum(1 for r in zoho_results if not r.ok and not r.blocked and r.status != "skipped")
+
+    # POEvent per non-success line so admins can audit without paging through
+    # uvicorn logs. Successful commits don't get a per-line event — the
+    # "received" event above already summarises the operator's submission.
+    for r in zoho_results:
+        if r.status in ("committed", "skipped"):
+            continue
+        prefix = {
+            "blocked": "Zoho receive blocked (live writes disabled)",
+            "disabled": "Zoho receive submission disabled by ops",
+            "not_configured": "Zoho receive skipped — integration not configured",
+            "validation_failed": f"Zoho receive validation failed ({r.error_code})",
+            "config_error": f"Zoho integration config error ({r.error_code})",
+            "auth_failed": "Zoho integration auth failed",
+            "idempotency_conflict": "Zoho receive idempotency conflict (data inconsistency)",
+            "rate_limited": "Zoho integration rate-limited",
+            "gateway_error": "Zoho integration gateway error",
+        }.get(r.status, f"Zoho receive status={r.status}")
         session.add(POEvent(
             po_id=po.id,
-            kind="system",
-            message=f"Zoho purchase receive failed: {zoho_err}",
+            kind="zoho_receive",
+            message=f"{prefix}: {r.submission.item_name} qty={r.submission.quantity:g}"
+                    + (f" — {r.message}" if r.message else ""),
         ))
+    if zoho_results:
         session.commit()
+
+    # Attach a per-line zoho status to results so the template can render it.
+    by_box_id = {r.submission.box_receipt_id: r for r in zoho_results}
+    for entry in results:
+        zr = by_box_id.get(entry.get("_box_receipt_id"))
+        if zr is None:
+            continue
+        entry["zoho_status"] = zr.status
+        entry["zoho_msg"] = zr.message
+        entry["zoho_error_code"] = zr.error_code
 
     from packtrack.main import templates
     return templates.TemplateResponse(
@@ -338,8 +377,10 @@ async def submit_receiving(
             "mirror": mirror,
             "po": po,
             "results": results,
-            "zoho_ok": zoho_ok,
-            "zoho_err": zoho_err,
+            "zoho_committed": committed,
+            "zoho_blocked": blocked,
+            "zoho_failed": failed,
+            "zoho_total": len(zoho_results),
             "is_retry": False,
         },
         status_code=200,
@@ -487,8 +528,12 @@ def retry_luma_push(
             "mirror": mirror,
             "po": po,
             "results": retry_results,
-            "zoho_ok": True,   # no Zoho receive being created
-            "zoho_err": None,
+            # No Zoho receives are being submitted on a Luma retry — collapse
+            # to neutral counters so the template hides the Zoho summary block.
+            "zoho_committed": 0,
+            "zoho_blocked": 0,
+            "zoho_failed": 0,
+            "zoho_total": 0,
             "is_retry": True,
         },
         status_code=200,

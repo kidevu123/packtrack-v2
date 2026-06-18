@@ -3,14 +3,18 @@
 Three responsibilities:
   1. adopt_zoho_po   — ensure a PackTrack PurchaseOrder + POLines exist for a
                        Zoho-mirrored PO so BoxReceipts can be attached.
-  2. create_zoho_receive — POST a purchase-receive to Zoho via the gateway.
+  2. submit_zoho_receives — commit per-line purchase receives through
+                       zoho-integration-service. Pack Track never calls Zoho
+                       directly for receive writes.
   3. push_luma_receipt   — POST one BoxReceipt to Luma's webhook.
 """
 from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
 import httpx
 from sqlmodel import Session, select
@@ -26,6 +30,17 @@ from packtrack.models import (
     PurchaseOrder,
     User,
     ZohoMirror,
+)
+from packtrack.services.zoho_integration import (
+    ReceivePayload,
+    ZohoIntegrationConfigError,
+    ZohoIntegrationGatewayError,
+    ZohoIntegrationIdempotencyConflictError,
+    ZohoIntegrationLiveWriteDisabledError,
+    ZohoIntegrationNotConfiguredError,
+    ZohoIntegrationRateLimitedError,
+    ZohoIntegrationValidationError,
+    commit_receive,
 )
 
 logger = logging.getLogger("packtrack.receiving")
@@ -148,67 +163,211 @@ def adopt_zoho_po(session: Session, mirror: ZohoMirror, created_by: User) -> Pur
 
 
 # ---------------------------------------------------------------------------
-# 2. Push to Zoho via gateway
+# 2. Submit purchase receives via zoho-integration-service
 # ---------------------------------------------------------------------------
 
 
-def create_zoho_receive(
-    mirror: ZohoMirror,
-    received_lines: list[dict],  # [{zoho_item_id, zoho_line_item_id, quantity, unit}]
-    luma_operation_id: str,
-    notes: str | None = None,
-) -> tuple[bool, str | None]:
-    """POST a purchase receive to Zoho via the gateway.
+LineStatus = Literal[
+    "committed",
+    "blocked",            # 403 LIVE_WRITE_DISABLED — recorded locally, no Zoho write
+    "validation_failed",  # 4xx with a typed code (ITEM_PO_MISMATCH, INSUFFICIENT_*, etc.)
+    "config_error",       # service knows brand/org/product/credential is missing
+    "auth_failed",        # 403 ZOHO_AUTH_FORBIDDEN
+    "idempotency_conflict",
+    "rate_limited",
+    "gateway_error",
+    "skipped",            # nothing to send (zero qty)
+    "not_configured",     # client env not set — operator decision
+    "disabled",           # off-switch flipped in settings
+]
 
-    Returns ``(ok, error_message)``. Never raises — failures are logged and
-    surfaced to the caller to record in the POEvent stream.
+
+@dataclass(frozen=True)
+class ZohoReceiveSubmission:
+    """One Pack Track line being sent to zoho-integration-service.
+
+    ``zoho_line_item_id`` is required by the service (400 PO_LINE_ITEM_NOT_FOUND
+    otherwise) — callers must source it from the synced ZohoMirror, not guess.
     """
-    if not settings.gateway_configured:
-        return False, "Gateway not configured."
-    if not received_lines:
-        return False, "No line items to receive."
 
-    line_items = [
-        {
-            "item_id": li["zoho_item_id"],
-            "quantity": li["quantity"],
-            **({"line_item_id": li["zoho_line_item_id"]} if li.get("zoho_line_item_id") else {}),
-            **({"unit": li["unit"]} if li.get("unit") else {}),
-        }
-        for li in received_lines
-        if li.get("quantity", 0) > 0
-    ]
-    if not line_items:
-        return False, "All received quantities are zero."
+    box_receipt_id: int
+    packtrack_receipt_id: str
+    zoho_item_id: str
+    zoho_line_item_id: str
+    quantity: float
+    item_name: str  # used for log/event messages, not sent in the payload
 
-    base = settings.ZOHO_GATEWAY_URL.rstrip("/")
-    payload = {
-        "dry_run": False,
-        "luma_operation_id": luma_operation_id,
-        "purchaseorder_id": mirror.zoho_purchaseorder_id,
-        "date": date.today().isoformat(),
-        "line_items": line_items,
-        **({"notes": notes} if notes else {}),
-    }
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            r = client.post(
-                f"{base}/zoho/purchase_receives/create",
-                headers={
-                    "X-Brand": settings.ZOHO_GATEWAY_BRAND,
-                    "X-Internal-Token": settings.ZOHO_GATEWAY_TOKEN,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+
+@dataclass(frozen=True)
+class ZohoReceiveResult:
+    submission: ZohoReceiveSubmission
+    status: LineStatus
+    message: str | None
+    error_code: str | None = None  # service error code (ITEM_PO_MISMATCH, …)
+    response: dict | None = None   # parsed service response on success
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "committed"
+
+    @property
+    def blocked(self) -> bool:
+        """True iff the line did not fail per se but no Zoho write happened
+        (LIVE_WRITE_DISABLED / disabled). Receipt remains in Pack Track."""
+        return self.status in ("blocked", "disabled", "not_configured")
+
+
+def submit_zoho_receives(
+    mirror: ZohoMirror,
+    submissions: list[ZohoReceiveSubmission],
+    *,
+    operator: User,
+    session_id: str,
+    notes: str | None = None,
+) -> list[ZohoReceiveResult]:
+    """Commit each ``ZohoReceiveSubmission`` through zoho-integration-service.
+
+    One HTTP call per submission; the service is authoritative for ordering
+    and idempotency. Returns per-line results — caller writes POEvents and
+    updates the receiving response template from them.
+
+    Never raises — every failure is captured in a ``ZohoReceiveResult`` so
+    Pack Track's local state (BoxReceipt rows) stays consistent regardless
+    of service availability.
+    """
+    if not submissions:
+        return []
+    if not settings.ZOHO_INTEGRATION_RECEIVE_ENABLED:
+        return [
+            ZohoReceiveResult(
+                submission=s,
+                status="disabled",
+                message="Zoho integration receive submission is disabled.",
             )
-        if r.status_code >= 400:
-            msg = f"HTTP {r.status_code}: {r.text[:300]}"
-            logger.warning("Zoho receive failed for %s: %s", mirror.zoho_purchaseorder_id, msg)
-            return False, msg
-        return True, None
-    except Exception as e:
-        logger.exception("Zoho receive error for %s", mirror.zoho_purchaseorder_id)
-        return False, str(e)[:500]
+            for s in submissions
+        ]
+    if not settings.zoho_integration_configured:
+        return [
+            ZohoReceiveResult(
+                submission=s,
+                status="not_configured",
+                message="Zoho integration service is not configured.",
+            )
+            for s in submissions
+        ]
+
+    today = date.today().isoformat()
+    results: list[ZohoReceiveResult] = []
+
+    # One client for the whole batch — pools the TCP connection across lines.
+    with httpx.Client(timeout=settings.ZOHO_INTEGRATION_TIMEOUT_SECONDS) as client:
+        for sub in submissions:
+            if sub.quantity <= 0:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub, status="skipped", message="Zero quantity.",
+                    )
+                )
+                continue
+            if not sub.zoho_line_item_id:
+                # Without this Zoho can't map the line — fail loudly so the
+                # operator knows the mirror needs to be re-synced.
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub,
+                        status="validation_failed",
+                        error_code="PO_LINE_ITEM_NOT_FOUND",
+                        message=(
+                            "Mirror has no Zoho line_item_id for this item — "
+                            "re-run Zoho sync to refresh, then retry."
+                        ),
+                    )
+                )
+                continue
+
+            payload = ReceivePayload(
+                pack_track_receipt_id=sub.packtrack_receipt_id,
+                purchaseorder_id=mirror.zoho_purchaseorder_id,
+                purchaseorder_line_item_id=sub.zoho_line_item_id,
+                item_id=sub.zoho_item_id,
+                received_quantity=sub.quantity,
+                received_date=today,
+                notes=notes,
+                pack_track_operator_id=str(operator.id) if operator.id is not None else None,
+                pack_track_workflow_session_id=session_id,
+            )
+            try:
+                body = commit_receive(payload, client=client)
+            except ZohoIntegrationLiveWriteDisabledError as e:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub, status="blocked", message=str(e) or
+                        "Live writes disabled on zoho-integration-service.",
+                    )
+                )
+            except ZohoIntegrationIdempotencyConflictError as e:
+                logger.error(
+                    "zoho_receive: idempotency conflict for receipt %s — "
+                    "Pack Track id was reused with different payload",
+                    sub.packtrack_receipt_id,
+                )
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub,
+                        status="idempotency_conflict",
+                        message=str(e) or "Idempotency conflict.",
+                    )
+                )
+            except ZohoIntegrationValidationError as e:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub,
+                        status="validation_failed",
+                        error_code=e.code,
+                        message=e.detail,
+                    )
+                )
+            except ZohoIntegrationConfigError as e:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub,
+                        status="config_error",
+                        error_code=e.code,
+                        message=e.detail,
+                    )
+                )
+            except ZohoIntegrationRateLimitedError as e:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub, status="rate_limited", message=str(e),
+                    )
+                )
+            except ZohoIntegrationNotConfiguredError as e:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub, status="not_configured", message=str(e),
+                    )
+                )
+            except ZohoIntegrationGatewayError as e:
+                logger.warning(
+                    "zoho_receive: gateway error for receipt %s: %s",
+                    sub.packtrack_receipt_id, e,
+                )
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub, status="gateway_error", message=str(e),
+                    )
+                )
+            else:
+                results.append(
+                    ZohoReceiveResult(
+                        submission=sub,
+                        status="committed",
+                        message=None,
+                        response=body if isinstance(body, dict) else None,
+                    )
+                )
+    return results
 
 
 # ---------------------------------------------------------------------------
