@@ -170,6 +170,26 @@ def test_commit_live_write_disabled_raises():
         commit_receive(_payload(), client=client)
 
 
+def test_commit_live_write_disabled_nested_error_shape_raises():
+    """The Pack Track receive endpoints wrap typed errors as
+    ``{"detail": {"error": {"code": ..., "message": ...}}}``. The client
+    must surface this as LiveWriteDisabledError, not GatewayError."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={"detail": {"error": {
+                "source": "internal",
+                "code": "LIVE_WRITE_DISABLED",
+                "internal_code": "LIVE_WRITE_DISABLED",
+                "message": "Live inventory writes are disabled.",
+                "retryable": False,
+            }}},
+        )
+
+    with _mock_client(handler) as client, pytest.raises(ZohoIntegrationLiveWriteDisabledError):
+        commit_receive(_payload(), client=client)
+
+
 def test_commit_idempotency_conflict_raises():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

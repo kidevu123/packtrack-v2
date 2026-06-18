@@ -166,15 +166,37 @@ def _url(path: str) -> str:
 def _parse_error(body: Any, fallback: str) -> tuple[str, str]:
     """Pull ``(code, detail)`` out of a service error body.
 
-    The service returns ``{"error": "CODE", "detail": "human text"}`` for
-    typed errors. Falls back to ``UNKNOWN`` / raw text when the body is not
-    a dict (e.g. an HTML 502 from a reverse proxy).
+    The service uses two shapes in practice:
+
+    * **Flat:** ``{"error": "CODE", "detail": "human text"}`` — early routes
+      and ad-hoc validation responses.
+    * **Nested:** ``{"detail": {"error": {"code": "CODE", "message": "…",
+      "internal_code": "…", …}}}`` — the FastAPI typed-error wrapper used
+      by the Pack Track receive endpoints.
+
+    Falls back to ``UNKNOWN`` / raw text when the body is not a dict (e.g.
+    an HTML 502 from a reverse proxy).
     """
-    if isinstance(body, dict):
-        code = str(body.get("error") or body.get("code") or "UNKNOWN")
-        detail = str(body.get("detail") or body.get("message") or fallback)
-        return code, detail
-    return "UNKNOWN", fallback or "no body"
+    if not isinstance(body, dict):
+        return "UNKNOWN", fallback or "no body"
+
+    # Nested shape first — be specific so a flat body with a {"detail": "…"}
+    # string never gets misread as a dict.
+    detail_field = body.get("detail")
+    if isinstance(detail_field, dict):
+        inner = detail_field.get("error") if isinstance(detail_field.get("error"), dict) else detail_field
+        code = str(
+            inner.get("code")
+            or inner.get("internal_code")
+            or inner.get("error")
+            or "UNKNOWN"
+        )
+        msg = str(inner.get("message") or inner.get("detail") or fallback or "")
+        return code, msg
+
+    code = str(body.get("error") or body.get("code") or "UNKNOWN")
+    detail = str(detail_field or body.get("message") or fallback or "")
+    return code, detail
 
 
 def _raise_for_status(resp: httpx.Response) -> None:
