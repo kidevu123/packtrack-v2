@@ -14,6 +14,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import StrEnum
 from typing import Literal
 
 import httpx
@@ -51,6 +52,26 @@ logger = logging.getLogger("packtrack.receiving")
 # ---------------------------------------------------------------------------
 
 
+def maybe_register_with_luma(item: Item) -> LumaRegistrationResult | None:
+    """Fire registration when the item has BOTH material_code AND
+    zoho_item_id; return ``None`` otherwise.
+
+    Best-effort wrapper for trigger points other than the receive flow
+    (item sync, ensure_material_code). Failures are logged inside the
+    helper; this never raises.
+    """
+    if not (item.material_code and item.zoho_item_id):
+        return None
+    try:
+        return register_item_with_luma(item)
+    except Exception:  # never let registration crash a caller
+        logger.exception(
+            "Luma registration helper raised unexpectedly for item %s (material_code=%s)",
+            item.id, item.material_code,
+        )
+        return None
+
+
 def ensure_material_code(session: Session, item: Item) -> str | None:
     """Guarantee ``item.material_code`` is set — generating one if needed.
 
@@ -61,6 +82,12 @@ def ensure_material_code(session: Session, item: Item) -> str | None:
 
     Writes back to the Item row and flushes so the caller's BoxReceipt
     snapshot picks up the new value.  Caller must commit.
+
+    Side effect: when material_code is set for the first time AND the
+    item has a zoho_item_id, the item is opportunistically registered
+    with Luma so Luma can fill in/refresh its zoho_item_id without
+    waiting for a receipt push. Best-effort — failures are logged, never
+    raised, so the receive flow stays in control of its own error path.
     """
     if item.material_code:
         return item.material_code
@@ -77,6 +104,7 @@ def ensure_material_code(session: Session, item: Item) -> str | None:
             session.add(item)
             session.flush()
             logger.info("material_code: item %s assigned from sku_code → %s", item.id, item.material_code)
+            maybe_register_with_luma(item)
             return item.material_code
         # sku_code already claimed by another item — fall through.
 
@@ -91,6 +119,7 @@ def ensure_material_code(session: Session, item: Item) -> str | None:
     session.add(item)
     session.flush()
     logger.info("material_code: item %s auto-generated → %s", item.id, item.material_code)
+    maybe_register_with_luma(item)
     return item.material_code
 
 
@@ -465,30 +494,75 @@ def _infer_luma_kind(item_name: str) -> str:
     return "OTHER"
 
 
-def register_material_with_luma(item: Item) -> tuple[bool, str | None]:
-    """Pre-register ``item.material_code`` with Luma so receipt pushes succeed.
+class LumaRegistrationOutcome(StrEnum):
+    """Result of a single Luma item-registration call.
 
-    Calls ``POST {luma_base}/api/integrations/packtrack/items`` which:
-      - finds or creates a ``packaging_materials`` row  (sku = material_code)
-      - finds or creates an ``external_item_mappings`` row
-    Returns ``(ok, error_message)``.
+    Mirrors the ``outcome`` field returned by Luma's
+    ``/api/integrations/packtrack/items`` endpoint, plus the local
+    short-circuit cases (skipped/failed) so callers can log every code
+    path uniformly.
+    """
 
-    Idempotent — safe to call on every receive.  A 200 means already
-    registered; a 201 means freshly created.  Both are success.
-    Callers should log failures but NOT block the receipt push — if the
-    item was registered previously (e.g. by a supervisor via the Luma UI)
-    the push will still succeed even if this call fails.
+    REGISTERED = "registered"                     # 201 — new material + mapping
+    UPDATED = "updated"                            # 200 — backfilled zoho_item_id
+    ALREADY_MAPPED = "already_mapped"              # 200 — no-op
+    CONFLICT = "conflict"                          # 409 — incoming zoho_item_id ≠ existing
+    SKIPPED_NO_CONFIG = "skipped_no_config"        # Luma webhook/secret not set
+    SKIPPED_NO_MATERIAL_CODE = "skipped_no_material_code"
+    FAILED = "failed"                              # transport / 5xx / parse
+
+
+@dataclass(frozen=True)
+class LumaRegistrationResult:
+    outcome: LumaRegistrationOutcome
+    luma_material_id: str | None = None
+    status_code: int | None = None
+    message: str | None = None
+    existing_zoho_item_id: str | None = None  # populated on CONFLICT for audit
+    incoming_zoho_item_id: str | None = None  # populated on CONFLICT for audit
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome in (
+            LumaRegistrationOutcome.REGISTERED,
+            LumaRegistrationOutcome.UPDATED,
+            LumaRegistrationOutcome.ALREADY_MAPPED,
+        )
+
+    @property
+    def needs_review(self) -> bool:
+        return self.outcome is LumaRegistrationOutcome.CONFLICT
+
+
+def register_item_with_luma(
+    item: Item,
+    *,
+    client: httpx.Client | None = None,
+) -> LumaRegistrationResult:
+    """Register ``item.material_code`` with Luma, including ``zoho_item_id``
+    when present, and return a structured outcome.
+
+    Calls ``POST {luma_base}/api/integrations/packtrack/items``. Luma's
+    endpoint upserts a ``packaging_materials`` row (sku = material_code),
+    fills ``zoho_item_id`` when it was previously NULL, and surfaces
+    ``ZOHO_ID_CONFLICT_REVIEW_REQUIRED`` if an incoming id contradicts an
+    existing non-NULL one.
+
+    Idempotent — safe to call on every receive, every Zoho item sync,
+    and from the backfill script.
     """
     if not settings.LUMA_RECEIPT_WEBHOOK_URL or not settings.LUMA_PACKTRACK_SECRET:
-        return False, "Luma not configured."
+        return LumaRegistrationResult(
+            outcome=LumaRegistrationOutcome.SKIPPED_NO_CONFIG,
+            message="Luma not configured (LUMA_RECEIPT_WEBHOOK_URL/SECRET missing).",
+        )
     if not item.material_code:
-        return False, "Item has no material_code to register."
+        return LumaRegistrationResult(
+            outcome=LumaRegistrationOutcome.SKIPPED_NO_MATERIAL_CODE,
+            message=f"Item {item.id} has no material_code to register.",
+        )
 
-    # Derive the items endpoint from the webhook URL.
-    # e.g. .../api/integrations/packtrack/receipts
-    #   → .../api/integrations/packtrack/items
     items_url = settings.LUMA_RECEIPT_WEBHOOK_URL.rsplit("/", 1)[0] + "/items"
-
     payload = {
         "material_code": item.material_code,
         "material_name": (item.name or item.material_code)[:240],
@@ -500,27 +574,93 @@ def register_material_with_luma(item: Item) -> tuple[bool, str | None]:
         "Content-Type": "application/json",
         "x-packtrack-secret": settings.LUMA_PACKTRACK_SECRET,
     }
+
+    owns_client = client is None
+    if client is None:
+        client = httpx.Client(timeout=20.0)
     try:
-        with httpx.Client(timeout=20.0) as client:
+        try:
             r = client.post(items_url, json=payload, headers=headers)
-        body = (
-            r.json()
-            if r.headers.get("content-type", "").startswith("application/json")
-            else {}
-        )
-        if r.status_code >= 400:
+        except httpx.HTTPError as e:
             logger.warning(
-                "Luma item registration failed for %s: HTTP %s %s",
-                item.material_code, r.status_code, body.get("error", r.text[:200]),
+                "Luma item registration network error for %s: %s",
+                item.material_code, e,
             )
-            return False, f"HTTP {r.status_code}: {body.get('error', r.text[:200])}"
-        logger.info(
-            "Luma item %s %s (luma_id=%s)",
+            return LumaRegistrationResult(
+                outcome=LumaRegistrationOutcome.FAILED,
+                message=f"network error: {e}",
+            )
+    finally:
+        if owns_client:
+            client.close()
+
+    body: dict = {}
+    if r.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = r.json() or {}
+        except ValueError:
+            body = {}
+
+    # Conflict — Luma already has a different zoho_item_id for this code.
+    # NEVER auto-overwritten on either side; surfaced for operator review.
+    if r.status_code == 409 or body.get("outcome") == "ZOHO_ID_CONFLICT_REVIEW_REQUIRED":
+        logger.warning(
+            "Luma zoho_item_id CONFLICT for material_code=%s — existing=%r incoming=%r",
             item.material_code,
-            "registered" if body.get("created") else "already mapped",
-            body.get("luma_material_id"),
+            body.get("existing_zoho_item_id"),
+            body.get("incoming_zoho_item_id"),
         )
+        return LumaRegistrationResult(
+            outcome=LumaRegistrationOutcome.CONFLICT,
+            status_code=r.status_code,
+            luma_material_id=body.get("luma_material_id"),
+            message=body.get("error") or "Zoho id conflict, review required.",
+            existing_zoho_item_id=body.get("existing_zoho_item_id"),
+            incoming_zoho_item_id=body.get("incoming_zoho_item_id"),
+        )
+
+    if r.status_code >= 400:
+        msg = f"HTTP {r.status_code}: {body.get('error', r.text[:200])}"
+        logger.warning("Luma item registration failed for %s: %s", item.material_code, msg)
+        return LumaRegistrationResult(
+            outcome=LumaRegistrationOutcome.FAILED,
+            status_code=r.status_code,
+            message=msg,
+        )
+
+    # 2xx: trust Luma's explicit outcome field; fall back to the legacy
+    # ``created`` flag for older deploys that don't return ``outcome``.
+    outcome_raw = (body.get("outcome") or "").upper()
+    if outcome_raw == "REGISTERED":
+        outcome = LumaRegistrationOutcome.REGISTERED
+    elif outcome_raw == "UPDATED":
+        outcome = LumaRegistrationOutcome.UPDATED
+    elif outcome_raw == "ALREADY_MAPPED":
+        outcome = LumaRegistrationOutcome.ALREADY_MAPPED
+    elif body.get("created") is True:
+        outcome = LumaRegistrationOutcome.REGISTERED
+    else:
+        outcome = LumaRegistrationOutcome.ALREADY_MAPPED
+
+    logger.info(
+        "Luma item %s -> %s (luma_id=%s, zoho_item_id=%s)",
+        item.material_code, outcome.value,
+        body.get("luma_material_id"), item.zoho_item_id or "(none)",
+    )
+    return LumaRegistrationResult(
+        outcome=outcome,
+        status_code=r.status_code,
+        luma_material_id=body.get("luma_material_id"),
+    )
+
+
+def register_material_with_luma(item: Item) -> tuple[bool, str | None]:
+    """Back-compat shim — receiving routes use this tuple signature.
+
+    Prefer :func:`register_item_with_luma` in new code; it surfaces
+    UPDATED / CONFLICT outcomes the tuple form folds away.
+    """
+    r = register_item_with_luma(item)
+    if r.ok:
         return True, None
-    except Exception:
-        logger.exception("Luma item registration error for %s", item.material_code)
-        return False, "Registration request failed."
+    return False, r.message or r.outcome.value
