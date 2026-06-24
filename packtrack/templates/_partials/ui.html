@@ -1,0 +1,175 @@
+{# Small reusable UI macros — keep this file the single source of visual
+   truth for headers, summary cards, badges, buttons, and empty states.
+   Concrete pages should import from here rather than re-implementing.
+
+   Usage:
+       {% import "_partials/ui.html" as ui %}
+       {{ ui.page_header(title="Inventory") }}
+       {{ ui.summary_card(label="Order Now", value=3, tone="danger") }}
+       {{ ui.status_badge("OK", tone="ok") }}
+#}
+
+
+{# ── Tones ──────────────────────────────────────────────────────────────
+   Map a semantic tone to the same Tailwind palette used everywhere else.
+   Adding a new tone? Add it here, not in page templates.
+#}
+{% macro _tone(tone, kind="badge") -%}
+  {%- set t = tone or "neutral" -%}
+  {%- if kind == "badge" -%}
+    {%- if t == "danger"  -%}bg-red-50 text-red-700 border border-red-100
+    {%- elif t == "warn"  -%}bg-amber-50 text-amber-700 border border-amber-100
+    {%- elif t == "ok"    -%}bg-emerald-50 text-emerald-700 border border-emerald-100
+    {%- elif t == "info"  -%}bg-blue-50 text-blue-700 border border-blue-100
+    {%- elif t == "muted" -%}bg-stone-100 text-stone-500 border border-stone-200
+    {%- else              -%}bg-stone-100 text-stone-700 border border-stone-200
+    {%- endif -%}
+  {%- elif kind == "dot" -%}
+    {%- if t == "danger" -%}bg-red-500
+    {%- elif t == "warn" -%}bg-amber-400
+    {%- elif t == "ok"   -%}bg-emerald-500
+    {%- elif t == "info" -%}bg-blue-500
+    {%- else             -%}bg-stone-400
+    {%- endif -%}
+  {%- elif kind == "summary-border" -%}
+    {%- if t == "danger" -%}border-red-200
+    {%- elif t == "warn" -%}border-amber-200
+    {%- elif t == "ok"   -%}border-emerald-200
+    {%- elif t == "info" -%}border-blue-200
+    {%- else             -%}border-stone-200
+    {%- endif -%}
+  {%- elif kind == "summary-icon" -%}
+    {%- if t == "danger" -%}bg-red-100 text-red-600
+    {%- elif t == "warn" -%}bg-amber-100 text-amber-600
+    {%- elif t == "ok"   -%}bg-emerald-100 text-emerald-600
+    {%- elif t == "info" -%}bg-blue-100 text-blue-600
+    {%- else             -%}bg-stone-100 text-stone-500
+    {%- endif -%}
+  {%- elif kind == "summary-value" -%}
+    {%- if t == "danger" -%}text-red-700
+    {%- elif t == "warn" -%}text-amber-700
+    {%- elif t == "ok"   -%}text-emerald-700
+    {%- elif t == "info" -%}text-blue-700
+    {%- else             -%}text-stone-900
+    {%- endif -%}
+  {%- endif -%}
+{%- endmacro %}
+
+
+{# ── page_header ────────────────────────────────────────────────────────
+   The standard top-of-page block.
+#}
+{% macro page_header(title, subtitle=None, primary=None, primary_href=None, secondary=[]) -%}
+<div class="flex items-end justify-between gap-4 mb-6 flex-wrap">
+  <div class="min-w-0">
+    <h1 class="text-2xl font-semibold tracking-tight">{{ title }}</h1>
+    {% if subtitle %}<p class="text-sm text-stone-500 mt-1">{{ subtitle }}</p>{% endif %}
+  </div>
+  <div class="flex items-center gap-3 text-sm shrink-0">
+    {% for s in secondary %}
+      <a href="{{ s.href }}" class="text-stone-500 hover:text-stone-900 transition-colors">{{ s.label }}</a>
+    {% endfor %}
+    {% if primary %}
+      <a href="{{ primary_href or '#' }}"
+         class="inline-flex items-center gap-1.5 rounded-xl bg-stone-900 text-white px-4 py-2 text-sm font-medium hover:bg-stone-800 transition-colors">
+        {{ primary }}
+      </a>
+    {% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+
+{# ── status_badge ──────────────────────────────────────────────────────
+   Small, single-line state pill. Use sparingly per row — one is signal,
+   five is noise.
+#}
+{% macro status_badge(label, tone="neutral", size="sm") -%}
+  {%- set pad = "px-2 py-0.5 text-[11px]" if size == "sm" else "px-2.5 py-1 text-xs" -%}
+  <span class="inline-flex items-center rounded-full font-medium {{ pad }} {{ _tone(tone, 'badge') }}">{{ label }}</span>
+{%- endmacro %}
+
+
+{# ── summary_card ──────────────────────────────────────────────────────
+   The 1/4-row stat card on top of dashboards. Linkable when the value
+   represents a filtered subset the operator should drill into.
+#}
+{% macro summary_card(label, value, tone="neutral", icon_path=None, href=None, sub=None) -%}
+  {%- set body -%}
+    <div class="bg-white border rounded-xl px-4 py-3 flex items-center gap-3 transition-colors {{ _tone(tone, 'summary-border') }} {{ 'hover:bg-stone-50 cursor-pointer' if href else '' }}">
+      {% if icon_path %}
+        <div class="size-8 rounded-lg flex items-center justify-center shrink-0 {{ _tone(tone, 'summary-icon') }}">
+          <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon_path }}"/>
+          </svg>
+        </div>
+      {% endif %}
+      <div class="min-w-0">
+        <div class="text-xl font-semibold leading-none tabular-nums {{ _tone(tone, 'summary-value') }}">{{ value }}</div>
+        <div class="text-xs text-stone-500 mt-0.5">{{ label }}</div>
+        {% if sub %}<div class="text-[11px] text-stone-400 mt-0.5">{{ sub }}</div>{% endif %}
+      </div>
+    </div>
+  {%- endset -%}
+  {% if href %}<a href="{{ href }}" class="block">{{ body }}</a>{% else %}{{ body }}{% endif %}
+{%- endmacro %}
+
+
+{# ── empty_state ───────────────────────────────────────────────────────
+   Centered no-data block. Optional icon SVG path (24x24).
+#}
+{% macro empty_state(title, body=None, icon_path="M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z") -%}
+<div class="flex flex-col items-center gap-3 max-w-sm mx-auto py-16 text-center">
+  <div class="size-12 rounded-xl bg-stone-100 flex items-center justify-center">
+    <svg class="size-6 text-stone-400" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon_path }}"/>
+    </svg>
+  </div>
+  <div>
+    <p class="text-sm font-semibold text-stone-700">{{ title }}</p>
+    {% if body %}<p class="text-xs text-stone-400 mt-1 leading-relaxed">{{ body }}</p>{% endif %}
+  </div>
+</div>
+{%- endmacro %}
+
+
+{# ── button ────────────────────────────────────────────────────────────
+   Variants: primary (filled stone-900), secondary (outlined), danger
+   (filled red). Use these instead of hand-rolled buttons so the visual
+   hierarchy stays predictable.
+#}
+{% macro button(label, href=None, variant="primary", size="md") -%}
+  {%- set sz = "px-3 py-1.5 text-xs" if size == "sm" else "px-4 py-2 text-sm" -%}
+  {%- if variant == "danger" -%}
+    {%- set cls = "bg-red-600 hover:bg-red-700 text-white" -%}
+  {%- elif variant == "secondary" -%}
+    {%- set cls = "border border-stone-300 bg-white text-stone-700 hover:border-stone-500 hover:text-stone-900" -%}
+  {%- elif variant == "ghost" -%}
+    {%- set cls = "text-stone-500 hover:text-stone-900 hover:bg-stone-100" -%}
+  {%- else -%}
+    {%- set cls = "bg-stone-900 hover:bg-stone-800 text-white" -%}
+  {%- endif -%}
+  {%- if href -%}
+    <a href="{{ href }}" class="inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors {{ sz }} {{ cls }}">{{ label }}</a>
+  {%- else -%}
+    <button class="inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors {{ sz }} {{ cls }}">{{ label }}</button>
+  {%- endif -%}
+{%- endmacro %}
+
+
+{# ── runway_bar ────────────────────────────────────────────────────────
+   Reusable little capacity bar (used by inventory + forecast for days-
+   of-stock). 0..90 days mapped to 0..100% width with a tone-derived fill.
+#}
+{% macro runway_bar(days, tone="neutral", width="w-16") -%}
+  {%- set d = [[(days or 0)|int, 0]|max, 90]|min -%}
+  {%- set w = (d / 90 * 100)|int -%}
+  {%- if tone == "danger" -%}{%- set fill = "bg-red-500" -%}
+  {%- elif tone == "warn" -%}{%- set fill = "bg-amber-400" -%}
+  {%- elif tone == "ok"   -%}{%- set fill = "bg-emerald-400" -%}
+  {%- else                -%}{%- set fill = "bg-stone-400" -%}
+  {%- endif -%}
+  <div class="{{ width }} h-1.5 bg-stone-100 rounded-full overflow-hidden">
+    <div class="h-full rounded-full {{ fill }}" style="width: {{ w }}%"></div>
+  </div>
+{%- endmacro %}

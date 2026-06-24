@@ -128,12 +128,59 @@
 {# ── Two-col: Needs you + Stock alerts ────────────────────────────────────── #}
 <div class="grid lg:grid-cols-5 gap-6 mb-8">
 
-  {# Needs you #}
+  {# Needs you — reorder items are grouped into one card so a long
+     critical-stock list does not become a wall of red. Non-reorder
+     action items (PI approvals, ship-confirms, etc.) keep individual
+     cards because each is a one-click decision. #}
+  {% set reorders = dash.inbox | selectattr('cta', 'equalto', 'Reorder') | list %}
+  {% set other_inbox = dash.inbox | rejectattr('cta', 'equalto', 'Reorder') | list %}
+  {% set REORDER_PREVIEW = 5 %}
   <section class="lg:col-span-3">
     <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider mb-3">Needs you</p>
     {% if dash.inbox %}
       <ul class="space-y-2">
-        {% for item in dash.inbox %}
+
+        {# Reorder group card — only when there is at least one critical item. #}
+        {% if reorders %}
+          <li class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 shadow-sm">
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="size-2 rounded-full bg-red-500 shrink-0"></span>
+                <p class="text-sm font-semibold text-red-900 truncate">
+                  {{ reorders|length }} item{{ '' if reorders|length == 1 else 's' }} at critical stock
+                </p>
+              </div>
+              <a href="/inventory?stock_status=critical"
+                 class="shrink-0 text-xs font-semibold text-red-700 hover:text-red-900 whitespace-nowrap">
+                View all →
+              </a>
+            </div>
+            <ul class="divide-y divide-red-200/60 -mx-1 px-1">
+              {% for r in reorders[:REORDER_PREVIEW] %}
+                <li class="py-1.5 flex items-center justify-between gap-3 text-sm">
+                  <div class="min-w-0">
+                    <p class="font-medium text-stone-900 truncate">{{ r.title }}</p>
+                    <p class="text-[11px] text-stone-500 truncate">{{ r.subtitle }}</p>
+                  </div>
+                  <a href="{{ r.href }}"
+                     class="shrink-0 text-xs font-semibold text-red-700 hover:text-red-900 whitespace-nowrap">
+                    {{ r.cta }} →
+                  </a>
+                </li>
+              {% endfor %}
+            </ul>
+            {% if reorders|length > REORDER_PREVIEW %}
+              <p class="mt-1.5 text-[11px] text-red-700/80">
+                + {{ reorders|length - REORDER_PREVIEW }} more — see full list at
+                <a href="/inventory?stock_status=critical" class="font-semibold underline decoration-red-300 hover:decoration-red-700">Inventory (critical)</a>
+                or <a href="/inventory/forecast#order-now" class="font-semibold underline decoration-red-300 hover:decoration-red-700">Forecast</a>.
+              </p>
+            {% endif %}
+          </li>
+        {% endif %}
+
+        {# Other action items — one card each (these are not stock spam). #}
+        {% for item in other_inbox %}
           {% if item.severity == 'danger' %}
             {% set card = 'bg-red-50 border-red-200' %}
             {% set cta = 'bg-red-600 hover:bg-red-700 text-white' %}

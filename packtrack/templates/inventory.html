@@ -1,47 +1,71 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Inventory · PackTrack{% endblock %}
-{% block container_class %}max-w-5xl{% endblock %}
+{% block container_class %}max-w-[1400px]{% endblock %}
 {% block content %}
 <style>[x-cloak] { display: none !important; }</style>
 
-<div class="flex items-end justify-between gap-4 mb-4 flex-wrap">
-  <h1 class="text-2xl font-semibold">Inventory</h1>
-  <div class="flex items-center gap-3 text-sm">
-    <a href="/inventory.csv" class="text-stone-500 hover:text-stone-900">Export CSV</a>
-    {% if user.role.value == 'owner' %}
-      <a href="/admin/sync" class="text-stone-500 hover:text-stone-900">Sync now →</a>
-      <a href="/inventory/forecast" class="text-stone-500 hover:text-stone-900 hidden sm:inline">Forecast →</a>
-    {% endif %}
-  </div>
-</div>
+{% set _secondary = [{"label":"Export CSV","href":"/inventory.csv"}] %}
+{% if user.role.value == 'owner' %}
+  {% set _secondary = _secondary + [
+       {"label":"Sync now →","href":"/admin/sync"},
+       {"label":"Forecast →","href":"/inventory/forecast"}
+     ] %}
+{% endif %}
+{{ ui.page_header(
+     title="Inventory",
+     subtitle="Stock by item across vendors. Owner edits override the Zoho-synced reorder thresholds.",
+     secondary=_secondary,
+) }}
 
-<form method="get" class="mb-4 grid grid-cols-1 sm:grid-cols-12 gap-2">
-  <input name="q" value="{{ q }}" placeholder="Search by name, SKU, material code, or vendor..."
-         class="sm:col-span-5 rounded-xl border-stone-300 text-sm px-4 py-2.5" />
+{# ── Toolbar / filters ─────────────────────────────────────────────── #}
+<form method="get" class="mb-5 bg-white border border-stone-200 rounded-2xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 shadow-sm">
+  <label class="sm:col-span-6 relative">
+    <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none">
+      <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
+    </svg>
+    <input name="q" value="{{ q }}" placeholder="Search by name, SKU, material code, or vendor…"
+           class="w-full pl-9 pr-3 py-2 rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+  </label>
   <input name="vendor" value="{{ vendor }}" placeholder="Vendor"
-         class="sm:col-span-3 rounded-xl border-stone-300 text-sm px-4 py-2.5" />
-  <select name="stock_status" class="sm:col-span-2 rounded-xl border-stone-300 text-sm px-3 py-2.5">
+         class="sm:col-span-2 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+  <select name="stock_status" class="sm:col-span-2 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
     <option value="">Any stock</option>
     <option value="critical" {{ 'selected' if stock_status == 'critical' else '' }}>Critical</option>
     <option value="low" {{ 'selected' if stock_status == 'low' else '' }}>Low / reorder</option>
     <option value="ok" {{ 'selected' if stock_status == 'ok' else '' }}>OK</option>
   </select>
-  <label class="sm:col-span-1 inline-flex items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-3 py-2.5 text-xs text-stone-600">
-    <input type="checkbox" name="missing_material_code" value="true" {{ 'checked' if missing_material_code else '' }} />
-    Missing
+  <label class="sm:col-span-1 inline-flex items-center justify-center gap-2 rounded-lg border border-stone-300 bg-white px-2 py-2 text-xs text-stone-600 cursor-pointer hover:border-stone-500">
+    <input type="checkbox" name="missing_material_code" value="true" class="rounded border-stone-400 text-stone-900 focus:ring-0" {{ 'checked' if missing_material_code else '' }} />
+    Missing code
   </label>
-  <button class="sm:col-span-1 rounded-xl bg-stone-900 text-white text-sm font-medium px-4 py-2.5 hover:bg-stone-800">Filter</button>
+  <button class="sm:col-span-1 rounded-lg bg-stone-900 text-white text-sm font-medium px-3 py-2 hover:bg-stone-800">Filter</button>
 </form>
 
-<ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
-  {% for it in items %}
-    {% include "_partials/inventory_row.html" %}
-  {% else %}
-    <li class="p-8 text-center text-sm text-stone-500">
-      No items yet. Go to <a href="/admin/sync" class="text-blue-600">Settings → Sync</a> to pull from Zoho.
-    </li>
-  {% endfor %}
-</ul>
+{# ── List ──────────────────────────────────────────────────────────── #}
+{% if items %}
+<div class="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm">
+  {# Compact, table-like header so columns are predictable on desktop. #}
+  <div class="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-stone-400 border-b border-stone-100 bg-stone-50">
+    <div class="col-span-6">Item</div>
+    <div class="col-span-3">Status</div>
+    <div class="col-span-2 text-right">On hand</div>
+    <div class="col-span-1 text-right"></div>
+  </div>
+  <ul class="divide-y divide-stone-100">
+    {% for it in items %}
+      {% include "_partials/inventory_row.html" %}
+    {% endfor %}
+  </ul>
+</div>
+{% else %}
+<div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+  {{ ui.empty_state(
+       title="No matching items",
+       body="Try clearing filters, or pull a fresh snapshot from Settings → Sync.",
+  ) }}
+</div>
+{% endif %}
 
 <p class="mt-3 text-xs text-stone-400">
   {{ items|length }} item{{ '' if items|length == 1 else 's' }}.

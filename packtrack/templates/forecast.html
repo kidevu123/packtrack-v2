@@ -1,303 +1,221 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Forecast · PackTrack{% endblock %}
-{% block container_class %}max-w-6xl{% endblock %}
+{% block container_class %}max-w-[1400px]{% endblock %}
 {% block content %}
 
-{# ── Page header ─────────────────────────────────────────────────────────── #}
-<div class="flex items-end justify-between gap-4 mb-6">
-  <div>
-    <h1 class="text-2xl font-semibold tracking-tight">Inventory Forecast</h1>
-    <p class="text-sm text-stone-500 mt-1">Based on 60-day sales velocity × BOM. Sea lead times applied.</p>
-  </div>
-  <a href="/inventory" class="text-sm text-stone-500 hover:text-stone-900 transition-colors">← Back to Inventory</a>
-</div>
+{% set ok_rows = all_rows | selectattr('panel', 'equalto', 'ok') | list %}
+{% set no_data_rows = all_rows | rejectattr('panel', 'in', ['order_now', 'watch', 'ok']) | list %}
 
-{# ── Summary stat bar ────────────────────────────────────────────────────── #}
+{{ ui.page_header(
+     title="Inventory Forecast",
+     subtitle="Based on 60-day sales velocity × BOM. Sea lead times applied. Click a summary card to jump to that group.",
+     secondary=[{"label":"← Back to Inventory","href":"/inventory"}],
+) }}
+
+{# ── Summary stat bar — every card is a section anchor ──────────────── #}
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-
-  <div class="bg-white border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
-    <div class="size-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-      <svg class="size-4 text-red-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/>
-      </svg>
-    </div>
-    <div>
-      <div class="text-xl font-semibold text-red-700 leading-none">{{ order_now|length }}</div>
-      <div class="text-xs text-stone-500 mt-0.5">Order Now</div>
-    </div>
-  </div>
-
-  <div class="bg-white border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
-    <div class="size-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-      <svg class="size-4 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"/>
-        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
-      </svg>
-    </div>
-    <div>
-      <div class="text-xl font-semibold text-amber-700 leading-none">{{ watch|length }}</div>
-      <div class="text-xs text-stone-500 mt-0.5">Watch</div>
-    </div>
-  </div>
-
-  <div class="bg-white border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
-    <div class="size-8 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
-      <svg class="size-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/>
-      </svg>
-    </div>
-    <div>
-      <div class="text-xl font-semibold text-green-700 leading-none">
-        {% set ok_count = all_rows | selectattr('panel', 'equalto', 'ok') | list | length %}
-        {{ ok_count }}
-      </div>
-      <div class="text-xs text-stone-500 mt-0.5">Healthy</div>
-    </div>
-  </div>
-
-  <div class="bg-white border border-stone-200 rounded-xl px-4 py-3 flex items-center gap-3">
-    <div class="size-8 rounded-lg bg-stone-100 flex items-center justify-center shrink-0">
-      <svg class="size-4 text-stone-500" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
-      </svg>
-    </div>
-    <div>
-      <div class="text-xs font-semibold text-stone-700 leading-none">Just now</div>
-      <div class="text-xs text-stone-500 mt-0.5">Last updated</div>
-    </div>
-  </div>
-
+  {{ ui.summary_card(
+       label="Order Now",
+       value=order_now|length,
+       tone="danger",
+       icon_path="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z",
+       href="#order-now",
+       sub="Reorder window within 7d" if order_now else "Nothing urgent",
+  ) }}
+  {{ ui.summary_card(
+       label="Watch",
+       value=watch|length,
+       tone="warn",
+       icon_path="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z",
+       href="#watch",
+       sub="Reorder within 30d" if watch else "—",
+  ) }}
+  {{ ui.summary_card(
+       label="Healthy",
+       value=ok_rows|length,
+       tone="ok",
+       icon_path="m4.5 12.75 6 6 9-13.5",
+       href="#healthy",
+       sub="On runway",
+  ) }}
+  {{ ui.summary_card(
+       label="No data",
+       value=no_data_rows|length,
+       tone="neutral",
+       icon_path="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
+       href="#no-data" if no_data_rows else None,
+       sub="No demand signal yet",
+  ) }}
 </div>
 
-{# ── Order Now section ───────────────────────────────────────────────────── #}
-{% if order_now %}
-<section class="mb-7">
-  <div class="flex items-center gap-2.5 mb-3">
-    <span class="size-2.5 rounded-full bg-red-500 shrink-0"></span>
-    <h2 class="font-semibold text-red-700">Order Now ({{ order_now|length }})</h2>
-    <span class="text-xs text-red-400 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">Reorder date within 7 days</span>
-  </div>
-  <div class="bg-white border-l-4 border-l-red-500 border border-red-200 rounded-xl overflow-hidden shadow-sm">
-    <table class="w-full text-sm">
-      <thead class="bg-red-50 text-red-700 text-xs uppercase tracking-wide border-b border-red-200">
-        <tr>
-          <th class="px-4 py-3 text-left font-semibold">Material</th>
-          <th class="px-4 py-3 text-right font-semibold hidden sm:table-cell">On Hand</th>
-          <th class="px-4 py-3 text-right font-semibold">Days Left</th>
-          <th class="px-4 py-3 text-right font-semibold hidden md:table-cell">Reorder By</th>
-          <th class="px-4 py-3 text-right font-semibold hidden lg:table-cell">Suggested Qty</th>
-          <th class="px-4 py-3 text-right font-semibold">Action</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-red-100">
-        {% for row in order_now %}
-        <tr class="hover:bg-red-50 transition-colors">
-          <td class="px-4 py-3 font-medium">
-            {{ row.item.name }}
-            <div class="text-xs text-stone-400 mt-0.5">{{ row.item.material_code }}</div>
-          </td>
-          <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden sm:table-cell">{{ row.item.current_stock | int | format_thousands }}</td>
-          <td class="px-4 py-3 text-right">
-            <div class="inline-flex flex-col items-end gap-1">
-              <span class="font-bold text-red-600 tabular-nums leading-none">{{ row.days_of_stock | int }}d</span>
-              <div class="w-16 h-1.5 bg-red-100 rounded-full overflow-hidden">
-                {# runway bar: clamp days_of_stock to 0-90, width proportional #}
-                {% set pct = [[(row.days_of_stock | int), 0] | max, 90] | min %}
-                {% set pct_w = (pct / 90 * 100) | int %}
-                <div class="h-full rounded-full {% if pct <= 7 %}bg-red-500{% elif pct <= 30 %}bg-amber-400{% else %}bg-green-400{% endif %}"
-                     style="width: {{ pct_w }}%"></div>
-              </div>
-            </div>
-          </td>
-          <td class="px-4 py-3 text-right text-red-600 font-semibold tabular-nums hidden md:table-cell">{{ row.reorder_by_sea.strftime('%b %d') if row.reorder_by_sea else '—' }}</td>
-          <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden lg:table-cell">{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}</td>
-          <td class="px-4 py-3 text-right">
-            <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
-               class="inline-flex items-center gap-1.5 rounded-lg bg-red-600 text-white px-3.5 py-2 text-xs font-semibold hover:bg-red-700 active:bg-red-800 transition-colors shadow-sm">
-              Order Now
-              <svg class="size-3" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
-              </svg>
-            </a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
+{# ── Single row macro reused by all four sections ───────────────────── #}
+{% macro forecast_row(row) -%}
+  {% set tone =
+       "danger" if row.panel == "order_now"
+       else "warn" if row.panel == "watch"
+       else "ok"  if row.panel == "ok"
+       else "neutral" %}
+  {% set tone_text =
+       "text-red-600 font-semibold" if tone == "danger"
+       else "text-amber-700 font-semibold" if tone == "warn"
+       else "text-emerald-700 font-medium" if tone == "ok"
+       else "text-stone-400" %}
+  <tr class="cursor-pointer transition-colors
+             {{ 'opacity-70' if tone == 'neutral' else '' }}"
+      :class="activeRow === {{ row.item.id }} ? 'bg-stone-100 ring-1 ring-inset ring-stone-300' : 'hover:bg-stone-50'"
+      @click="activeRow = activeRow === {{ row.item.id }} ? null : {{ row.item.id }}"
+      hx-get="/inventory/forecast/detail/{{ row.item.id }}"
+      hx-target="#detail-panel"
+      hx-swap="innerHTML">
+    <td class="px-4 py-3 font-medium text-stone-900">
+      {{ row.item.name }}
+      <div class="text-xs text-stone-400 mt-0.5 font-mono">{{ row.item.material_code or '—' }}</div>
+    </td>
+    <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden sm:table-cell">
+      {{ row.item.current_stock | int | format_thousands }}
+    </td>
+    <td class="px-4 py-3 text-right text-stone-500 tabular-nums hidden md:table-cell">
+      {% if row.daily_demand > 0 %}{{ row.daily_demand }}/day{% else %}<span class="text-stone-300">—</span>{% endif %}
+    </td>
+    <td class="px-4 py-3 text-right">
+      <div class="inline-flex flex-col items-end gap-1">
+        <span class="tabular-nums leading-none {{ tone_text }}">
+          {% if row.days_of_stock < 9999 %}{{ row.days_of_stock | int }}d{% else %}&infin;{% endif %}
+        </span>
+        {% if row.days_of_stock < 9999 %}{{ ui.runway_bar(row.days_of_stock, tone=tone) }}{% endif %}
+      </div>
+    </td>
+    <td class="px-4 py-3 text-right tabular-nums hidden lg:table-cell {{ tone_text if tone != 'neutral' else 'text-stone-500' }}">
+      {{ row.reorder_by_sea.strftime('%b %d, %Y') if row.reorder_by_sea else '—' }}
+    </td>
+    <td class="px-4 py-3 text-right text-stone-500 tabular-nums hidden xl:table-cell">
+      {% if row.suggested_qty > 0 %}{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}{% else %}—{% endif %}
+    </td>
+    <td class="px-4 py-3 text-right">
+      {% if tone == "danger" %}{{ ui.status_badge("Order Now", tone="danger", size="md") }}
+      {% elif tone == "warn" %}{{ ui.status_badge("Watch", tone="warn", size="md") }}
+      {% elif tone == "ok"   %}{{ ui.status_badge("OK", tone="ok", size="md") }}
+      {% else %}{{ ui.status_badge("No data", tone="muted", size="md") }}{% endif %}
+    </td>
+  </tr>
+{%- endmacro %}
 
-{# ── Watch section ───────────────────────────────────────────────────────── #}
-{% if watch %}
-<section class="mb-7">
-  <div class="flex items-center gap-2.5 mb-3">
-    <span class="size-2.5 rounded-full bg-amber-400 shrink-0"></span>
-    <h2 class="font-semibold text-amber-700">Watch ({{ watch|length }})</h2>
-    <span class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Reorder date within 30 days</span>
-  </div>
-  <div class="bg-white border-l-4 border-l-amber-400 border border-amber-200 rounded-xl overflow-hidden shadow-sm">
-    <table class="w-full text-sm">
-      <thead class="bg-amber-50 text-amber-700 text-xs uppercase tracking-wide border-b border-amber-200">
-        <tr>
-          <th class="px-4 py-3 text-left font-semibold">Material</th>
-          <th class="px-4 py-3 text-right font-semibold hidden sm:table-cell">On Hand</th>
-          <th class="px-4 py-3 text-right font-semibold">Days Left</th>
-          <th class="px-4 py-3 text-right font-semibold hidden md:table-cell">Reorder By</th>
-          <th class="px-4 py-3 text-right font-semibold hidden lg:table-cell">Suggested Qty</th>
-          <th class="px-4 py-3 text-right font-semibold">Action</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-amber-100">
-        {% for row in watch %}
-        <tr class="hover:bg-amber-50 transition-colors">
-          <td class="px-4 py-3 font-medium">
-            {{ row.item.name }}
-            <div class="text-xs text-stone-400 mt-0.5">{{ row.item.material_code }}</div>
-          </td>
-          <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden sm:table-cell">{{ row.item.current_stock | int | format_thousands }}</td>
-          <td class="px-4 py-3 text-right">
-            <div class="inline-flex flex-col items-end gap-1">
-              <span class="font-semibold text-amber-600 tabular-nums leading-none">{{ row.days_of_stock | int }}d</span>
-              <div class="w-16 h-1.5 bg-amber-100 rounded-full overflow-hidden">
-                {% set pct = [[(row.days_of_stock | int), 0] | max, 90] | min %}
-                {% set pct_w = (pct / 90 * 100) | int %}
-                <div class="h-full rounded-full bg-amber-400"
-                     style="width: {{ pct_w }}%"></div>
-              </div>
-            </div>
-          </td>
-          <td class="px-4 py-3 text-right text-amber-700 font-semibold tabular-nums hidden md:table-cell">{{ row.reorder_by_sea.strftime('%b %d') if row.reorder_by_sea else '—' }}</td>
-          <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden lg:table-cell">{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}</td>
-          <td class="px-4 py-3 text-right">
-            <a href="/po/new?item_id={{ row.item.id }}&suggested_qty={{ row.suggested_qty | int }}"
-               class="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-white text-amber-700 px-3.5 py-2 text-xs font-semibold hover:bg-amber-50 active:bg-amber-100 transition-colors">
-              Plan PO
-              <svg class="size-3" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
-              </svg>
-            </a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
+{% macro forecast_table_header() -%}
+  <thead class="bg-stone-50 text-stone-500 text-xs uppercase tracking-wider border-b border-stone-200">
+    <tr>
+      <th class="px-4 py-3 text-left font-semibold">Material</th>
+      <th class="px-4 py-3 text-right font-semibold hidden sm:table-cell">On Hand</th>
+      <th class="px-4 py-3 text-right font-semibold hidden md:table-cell">Daily Demand</th>
+      <th class="px-4 py-3 text-right font-semibold">Runway</th>
+      <th class="px-4 py-3 text-right font-semibold hidden lg:table-cell">Reorder By</th>
+      <th class="px-4 py-3 text-right font-semibold hidden xl:table-cell">Suggested Qty</th>
+      <th class="px-4 py-3 text-right font-semibold">Status</th>
+    </tr>
+  </thead>
+{%- endmacro %}
 
-{# ── Full Forecast table ──────────────────────────────────────────────────── #}
-<section class="mb-6" x-data="{ activeRow: null }">
-  <div class="flex items-center gap-2.5 mb-3">
-    <span class="size-2.5 rounded-full bg-stone-400 shrink-0"></span>
-    <h2 class="font-semibold text-stone-700">Full Forecast</h2>
-    <span class="text-xs text-stone-500 bg-stone-100 border border-stone-200 rounded-full px-2 py-0.5">{{ all_rows|length }} materials</span>
-  </div>
-  <div class="bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
-    <table class="w-full text-sm">
-      <thead class="bg-stone-50 text-stone-500 text-xs uppercase tracking-wide border-b border-stone-200">
-        <tr>
-          <th class="px-4 py-3 text-left font-semibold">Material</th>
-          <th class="px-4 py-3 text-right font-semibold hidden sm:table-cell">On Hand</th>
-          <th class="px-4 py-3 text-right font-semibold hidden md:table-cell">Daily Demand</th>
-          <th class="px-4 py-3 text-right font-semibold">Runway</th>
-          <th class="px-4 py-3 text-right font-semibold hidden lg:table-cell">Reorder By</th>
-          <th class="px-4 py-3 text-right font-semibold hidden xl:table-cell">Suggested Qty</th>
-          <th class="px-4 py-3 text-right font-semibold">Status</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-stone-100">
-        {% for row in all_rows %}
-        <tr class="cursor-pointer transition-colors"
-            :class="activeRow === {{ row.item.id }} ? 'bg-stone-100 ring-1 ring-inset ring-stone-300' : 'hover:bg-stone-50'"
-            @click="activeRow = activeRow === {{ row.item.id }} ? null : {{ row.item.id }}"
-            hx-get="/inventory/forecast/detail/{{ row.item.id }}"
-            hx-target="#detail-panel"
-            hx-swap="innerHTML">
-          <td class="px-4 py-3 font-medium">
-            {{ row.item.name }}
-            <div class="text-xs text-stone-400 mt-0.5">{{ row.item.material_code }}</div>
-          </td>
-          <td class="px-4 py-3 text-right text-stone-600 tabular-nums hidden sm:table-cell">{{ row.item.current_stock | int | format_thousands }}</td>
-          <td class="px-4 py-3 text-right text-stone-500 tabular-nums hidden md:table-cell">
-            {% if row.daily_demand > 0 %}{{ row.daily_demand }}/day{% else %}<span class="text-stone-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-3 text-right">
-            <div class="inline-flex flex-col items-end gap-1">
-              <span class="tabular-nums font-semibold leading-none
-                {% if row.panel == 'order_now' %}text-red-600
-                {% elif row.panel == 'watch' %}text-amber-600
-                {% else %}text-stone-700{% endif %}">
-                {% if row.days_of_stock < 9999 %}{{ row.days_of_stock | int }}d{% else %}&infin;{% endif %}
-              </span>
-              {% if row.days_of_stock < 9999 %}
-              <div class="w-16 h-1.5 bg-stone-100 rounded-full overflow-hidden">
-                {% set pct = [[(row.days_of_stock | int), 0] | max, 90] | min %}
-                {% set pct_w = (pct / 90 * 100) | int %}
-                <div class="h-full rounded-full
-                  {% if row.panel == 'order_now' %}bg-red-500
-                  {% elif row.panel == 'watch' %}bg-amber-400
-                  {% else %}bg-green-400{% endif %}"
-                     style="width: {{ pct_w }}%"></div>
-              </div>
-              {% endif %}
-            </div>
-          </td>
-          <td class="px-4 py-3 text-right tabular-nums hidden lg:table-cell
-            {% if row.panel == 'order_now' %}text-red-600 font-semibold
-            {% elif row.panel == 'watch' %}text-amber-700 font-medium
-            {% else %}text-stone-500{% endif %}">
-            {{ row.reorder_by_sea.strftime('%b %d, %Y') if row.reorder_by_sea else '—' }}
-          </td>
-          <td class="px-4 py-3 text-right text-stone-500 tabular-nums hidden xl:table-cell">
-            {% if row.suggested_qty > 0 %}{{ row.suggested_qty | int | format_thousands }} {{ row.item.unit }}{% else %}—{% endif %}
-          </td>
-          <td class="px-4 py-3 text-right">
-            {% if row.panel == 'order_now' %}
-              <span class="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2.5 py-1 text-xs font-semibold">Order Now</span>
-            {% elif row.panel == 'watch' %}
-              <span class="inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-2.5 py-1 text-xs font-semibold">Watch</span>
-            {% elif row.panel == 'ok' %}
-              <span class="inline-flex items-center rounded-full bg-green-100 text-green-700 px-2.5 py-1 text-xs font-semibold">OK</span>
-            {% else %}
-              <span class="inline-flex items-center rounded-full bg-stone-100 text-stone-400 px-2.5 py-1 text-xs font-medium">No Data</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% else %}
-        {# ── Empty state ──────────────────────────────────────────────────── #}
-        <tr>
-          <td colspan="7" class="px-4 py-16 text-center">
-            <div class="flex flex-col items-center gap-3 max-w-sm mx-auto">
-              <div class="size-12 rounded-xl bg-stone-100 flex items-center justify-center">
-                <svg class="size-6 text-stone-400" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"/>
-                </svg>
-              </div>
-              <div>
-                <p class="text-sm font-semibold text-stone-700">No forecast data yet</p>
-                <p class="text-xs text-stone-400 mt-1 leading-relaxed">
-                  Forecast requires materials with a <code class="bg-stone-100 px-1 py-0.5 rounded text-stone-600">material_code</code> set,
-                  plus Phase A consumption records and at least 30 days of sales data.
-                </p>
-              </div>
-            </div>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
+<div x-data="{ activeRow: null }">
 
-{# ── Detail drill-down panel ─────────────────────────────────────────────── #}
-<div id="detail-panel"
-     class="mb-6 transition-all duration-300"
-     x-data
-     x-show="$el.children.length > 0"
-     x-transition:enter="transition ease-out duration-200"
-     x-transition:enter-start="opacity-0 translate-y-2"
-     x-transition:enter-end="opacity-100 translate-y-0">
+  {# ── Order Now ───────────────────────────────────────────────────── #}
+  {% if order_now %}
+  <section id="order-now" class="mb-7 scroll-mt-20">
+    <div class="flex items-center gap-2.5 mb-3">
+      <span class="size-2.5 rounded-full bg-red-500"></span>
+      <h2 class="font-semibold text-red-700">Order Now ({{ order_now|length }})</h2>
+      <span class="text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">Reorder date within 7 days</span>
+    </div>
+    <div class="bg-white border-l-4 border-l-red-500 border border-red-200 rounded-xl overflow-hidden shadow-sm">
+      <table class="w-full text-sm">
+        {{ forecast_table_header() }}
+        <tbody class="divide-y divide-red-100">
+          {% for row in order_now %}{{ forecast_row(row) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── Watch ──────────────────────────────────────────────────────── #}
+  {% if watch %}
+  <section id="watch" class="mb-7 scroll-mt-20">
+    <div class="flex items-center gap-2.5 mb-3">
+      <span class="size-2.5 rounded-full bg-amber-400"></span>
+      <h2 class="font-semibold text-amber-700">Watch ({{ watch|length }})</h2>
+      <span class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Reorder date within 30 days</span>
+    </div>
+    <div class="bg-white border-l-4 border-l-amber-400 border border-amber-200 rounded-xl overflow-hidden shadow-sm">
+      <table class="w-full text-sm">
+        {{ forecast_table_header() }}
+        <tbody class="divide-y divide-amber-100">
+          {% for row in watch %}{{ forecast_row(row) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── Healthy ───────────────────────────────────────────────────── #}
+  {% if ok_rows %}
+  <section id="healthy" class="mb-7 scroll-mt-20">
+    <div class="flex items-center gap-2.5 mb-3">
+      <span class="size-2.5 rounded-full bg-emerald-500"></span>
+      <h2 class="font-semibold text-emerald-700">Healthy ({{ ok_rows|length }})</h2>
+    </div>
+    <div class="bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
+      <table class="w-full text-sm">
+        {{ forecast_table_header() }}
+        <tbody class="divide-y divide-stone-100">
+          {% for row in ok_rows %}{{ forecast_row(row) }}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── No data — collapsed by default to drop visual weight ───────── #}
+  {% if no_data_rows %}
+  <section id="no-data" class="mb-7 scroll-mt-20" x-data="{ open: false }">
+    <button @click="open = !open"
+            class="flex items-center gap-2.5 mb-3 text-left w-full hover:text-stone-900 transition-colors text-stone-500">
+      <span class="size-2.5 rounded-full bg-stone-400"></span>
+      <h2 class="font-semibold">No demand data ({{ no_data_rows|length }})</h2>
+      <span class="text-xs text-stone-400">— material_code or sales velocity missing</span>
+      <svg x-show="!open" class="size-4 ml-auto" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+      <svg x-show="open" class="size-4 ml-auto" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5"/></svg>
+    </button>
+    <div x-show="open" x-transition>
+      <div class="bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
+        <table class="w-full text-sm">
+          {{ forecast_table_header() }}
+          <tbody class="divide-y divide-stone-100">
+            {% for row in no_data_rows %}{{ forecast_row(row) }}{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+
+  {# ── Empty state when there are no forecast rows at all ────────── #}
+  {% if not all_rows %}
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+    {{ ui.empty_state(
+         title="No forecast data yet",
+         body="Forecast requires materials with a material_code, plus Phase A consumption records and at least 30 days of sales data.",
+    ) }}
+  </div>
+  {% endif %}
+
+  {# ── Detail drill-down panel (HTMX target) ──────────────────────── #}
+  <div id="detail-panel"
+       class="mb-6 transition-all duration-300"
+       x-show="$el.children.length > 0"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 translate-y-2"
+       x-transition:enter-end="opacity-100 translate-y-0">
+  </div>
+
 </div>
 
 {% endblock %}
