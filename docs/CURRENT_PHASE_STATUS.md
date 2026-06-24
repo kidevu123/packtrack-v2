@@ -1,5 +1,29 @@
 # Current Phase Status
 
+## v2.3.0 — deployed and verified (2026-06-24)
+
+| | |
+|---|---|
+| **Production commit** | `a582f38814e114c61b88b3c16fd71480b52e8f96` (main) |
+| **Version** | `2.3.0` |
+| **Public URL** | `https://packtrack.booute.duckdns.org` |
+| **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
+| **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
+| **SSO** | Public `/auth/sso` redirect derives Authentik base from `OIDC_ISSUER_URL` — no LAN-IP leaks. State + nonce TTL 1800 s. Browser login round-trip verified by operator 2026-06-24. |
+| **CSS smoke** | `scripts/smoke_test.sh --base https://packtrack.booute.duckdns.org` passes — `/static/styles.css` 43 144 bytes, sentinels present, `/login` references the stylesheet. |
+| **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) |
+
+**Last reconciliation:** `release/reconcile-v2.3.0` merge — preserved the entire main Phase A/C/D inventory + forecasting + UI overhaul plus the v2.2.0 Zoho integration receive path, healthz axes, SSO public-URL fix, CSS deploy gate, and operator runbook. Merge details in commit `a582f38`.
+
+**Open items:**
+- Optional `v2.3.0` git tag — prepared but not created; awaiting explicit approval.
+- Local-only backup branches `backup/local-{main,feature-zoho-receives}-pre-reconcile-2026-06-24` retained for now; user to decide when to delete.
+- `.claude/` (per-user Claude Code settings) intentionally left untracked.
+
+---
+
+## Phase status (architecture roadmap)
+
 **Active phase:** Phase 0 — Docs/boundary correction for the
 Luma ↔ PackTrack separation (in progress).
 **Most recent completed phase:** P1.5 — Real Zoho item catalog sync +
