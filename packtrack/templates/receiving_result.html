@@ -17,6 +17,18 @@
   </p>
 </header>
 
+{% if already_processed %}
+<div class="rounded-xl border border-stone-300 bg-stone-50 px-5 py-4 mb-5 flex items-start gap-3">
+  <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-stone-500 shrink-0 mt-0.5">
+    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1-1z" clip-rule="evenodd"/>
+  </svg>
+  <div class="text-sm text-stone-700">
+    <p class="font-medium">This submission was already processed.</p>
+    <p class="text-xs text-stone-500 mt-0.5">Showing the receipts created the first time. No new BoxReceipts, no duplicate Luma push, no duplicate Zoho purchase receive.</p>
+  </div>
+</div>
+{% endif %}
+
 {# Line-item results #}
 <div class="space-y-3 mb-6">
   {% for r in results %}

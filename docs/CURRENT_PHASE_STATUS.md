@@ -1,11 +1,11 @@
 # Current Phase Status
 
-## v2.4.0 — UI polish release (active on main, not yet deployed)
+## v2.4.1 — Luma P0 hardening (active on main, not yet deployed)
 
 | | |
 |---|---|
-| **Active version on main** | `2.4.0` |
-| **Last deployed version** | `2.3.0` (production at commit `a582f38814e114c61b88b3c16fd71480b52e8f96`, tagged `v2.3.0`) |
+| **Active version on main** | `2.4.1` |
+| **Last deployed version** | `2.4.0` (production at the v2.4.0 commit, tagged `v2.4.0`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
 | **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
@@ -13,7 +13,13 @@
 | **CSS smoke** | `scripts/smoke_test.sh` passes; deploy gate asserts size + sentinels. |
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
 
-**v2.4.0 scope:** UI polish only — `_partials/ui.html` macro library, inventory page widened + clearer per-row hierarchy, forecast page collapsed to one shared row macro with clickable summary anchors + collapsible "No demand data" section, home "Needs you" reorder items grouped into one card with View All link. **No backend, auth, deploy, Zoho integration, migrations, or routes touched.**
+**v2.4.1 scope:** the three P0 Luma findings from the v2.4.0 audit —
+* **P0-1 fixed:** receiving form now requires a hidden `submission_id` token. The POST handler short-circuits when the same token already produced BoxReceipts on this PO, leveraging the existing `uq_box_receipts_po_box` UNIQUE constraint as the durable backstop. **No schema change.**
+* **P0-2 fixed:** `process_luma_consumption` now rejects negative `qty_consumed` as `skipped_invalid`. Stock unchanged, no audit row written.
+* **P0-3 fixed:** per-entry missing `material_code` is now `skipped_invalid` with a reason; the batch continues processing the remaining valid entries.
+* docs/PACKTRACK_LUMA_CONTRACT.md updated to reflect the new behaviour.
+
+**Previously shipped (v2.4.0):** UI polish — `_partials/ui.html` macro library, inventory page widened + clearer per-row hierarchy, forecast page collapsed to one shared row macro with clickable summary anchors + collapsible "No demand data" section, home "Needs you" reorder items grouped into one card with View All link.
 
 **Previously shipped (v2.3.0):** reconciliation of the v2.2.0 Zoho integration receive path with main's Phase A/C/D inventory + forecasting + UI overhaul. Tagged `v2.3.0` at commit `a582f38`.
 

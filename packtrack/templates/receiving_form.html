@@ -57,6 +57,13 @@
 {% else %}
   <form method="post" action="/receive/{{ mirror.zoho_purchaseorder_id }}" enctype="multipart/form-data">
 
+    {# P0-1 idempotency token. The POST handler rejects requests missing
+       this field and short-circuits when the same token already produced
+       receipts on this PO (see _existing_boxes_for_submission). Refreshing
+       the form generates a new token so a legitimate next-batch submission
+       works. #}
+    <input type="hidden" name="submission_id" value="{{ submission_id }}">
+
     <div class="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden mb-4">
       <table class="w-full text-sm">
         <thead class="bg-stone-50 border-b border-stone-200 text-xs font-semibold uppercase tracking-wide text-stone-500">

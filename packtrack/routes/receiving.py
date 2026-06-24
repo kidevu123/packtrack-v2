@@ -100,6 +100,83 @@ def receiving_list(
 # ---------------------------------------------------------------------------
 
 
+def _submission_box_prefix(submission_id: str) -> str:
+    """Box-number prefix used to bind a BoxReceipt to its submission.
+
+    The DB-level UNIQUE constraint ``uq_box_receipts_po_box`` (defined in
+    migration ``b7c2d8e1f4a9_box_receipts.py``) is the durable guard
+    against double-submit: if two POSTs share the same submission_id they
+    would derive the same box_numbers on the same PO and the second insert
+    would violate the constraint. We use a 12-char hex prefix (3×10^14
+    distinct values) so the prefix-LIKE lookup is selective enough that
+    accidental cross-submission collisions are astronomically rare on
+    realistic submission volumes.
+    """
+    return f"RCPT-{submission_id[:12]}-"
+
+
+def _existing_boxes_for_submission(
+    session: Session, po_id: int, submission_id: str,
+) -> list[BoxReceipt]:
+    """Return any BoxReceipts already created by this submission_id on this PO."""
+    if not submission_id:
+        return []
+    prefix = _submission_box_prefix(submission_id)
+    return session.exec(
+        select(BoxReceipt).where(
+            BoxReceipt.purchase_order_id == po_id,
+            BoxReceipt.box_number.like(f"{prefix}%"),  # type: ignore[attr-defined]
+        )
+    ).all()
+
+
+def _render_already_processed(
+    request: Request,
+    user: User,
+    mirror: ZohoMirror,
+    po: PurchaseOrder,
+    existing_boxes: list[BoxReceipt],
+):
+    """Render the result template using the rows the first POST created.
+
+    No new BoxReceipts, no fresh Luma push, no Zoho commit — the
+    original submission already did all of that. The template shows a
+    'submission already processed' banner.
+    """
+    from packtrack.main import templates
+
+    results: list[dict] = []
+    for box in sorted(existing_boxes, key=lambda b: b.box_number):
+        pushed = box.luma_push_status == LumaPushStatus.PUSHED
+        results.append({
+            "name": box.material_name,
+            "declared": box.declared_quantity,
+            "counted": box.counted_quantity,
+            "accepted": box.accepted_quantity,
+            "confidence": box.confidence.value,
+            "luma_ok": pushed,
+            "luma_err": None if pushed else ((box.luma_response or {}).get("error") if box.luma_response else None),
+            "ok": True,
+            "_box_receipt_id": box.id,
+        })
+    return templates.TemplateResponse(
+        request, "receiving_result.html",
+        {
+            "user": user,
+            "mirror": mirror,
+            "po": po,
+            "results": results,
+            "zoho_committed": 0,
+            "zoho_blocked": 0,
+            "zoho_failed": 0,
+            "zoho_total": 0,
+            "is_retry": False,
+            "already_processed": True,
+        },
+        status_code=200,
+    )
+
+
 @router.get("/{zoho_po_id}", response_class=HTMLResponse)
 def receiving_form(
     zoho_po_id: str,
@@ -115,6 +192,11 @@ def receiving_form(
     ).first()
     if mirror is None:
         raise HTTPException(status_code=404, detail="PO not found in mirror.")
+
+    # Fresh idempotency key per form render. The form embeds this as a
+    # hidden field; the POST handler refuses missing IDs and rejects any
+    # POST whose ID already produced BoxReceipts on this PO.
+    submission_id = uuid.uuid4().hex
 
     # Resolve each line item to an Item row (by zoho_item_id).
     line_items = []
@@ -162,6 +244,7 @@ def receiving_form(
             "line_items": line_items,
             "luma_configured": luma_configured,
             "failed_boxes_count": failed_boxes_count,
+            "submission_id": submission_id,
         },
     )
 
@@ -190,6 +273,35 @@ async def submit_receiving(
     form = await request.form()
     global_notes = (form.get("notes") or "").strip() or None
 
+    # ── P0-1 idempotency guard ────────────────────────────────────────
+    # Every receiving form render embeds a hex submission_id. We require
+    # it on POST so accidental double-submits (browser back+submit, lost
+    # connection retries, repeat click) cannot create duplicate
+    # BoxReceipts or duplicate Luma pushes. The durable backstop is the
+    # ``uq_box_receipts_po_box`` constraint — even if the in-flight
+    # check below missed a row, the second insert would fail at the DB.
+    submission_id = (form.get("submission_id") or "").strip()
+    if not submission_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing submission_id — refresh the receiving form and try again.",
+        )
+
+    # Look up the PT PO before the dedup check so we have an id to bind
+    # the lookup to. Do NOT call adopt_zoho_po yet (it would create a row
+    # even for empty submissions and dedup re-renders).
+    po_existing = session.exec(
+        select(PurchaseOrder).where(PurchaseOrder.zoho_po_id == zoho_po_id)
+    ).first()
+    if po_existing is not None:
+        already = _existing_boxes_for_submission(
+            session, po_existing.id, submission_id,
+        )
+        if already:
+            return _render_already_processed(
+                request, user, mirror, po_existing, already,
+            )
+
     # Parse per-line submissions.
     # Form fields are named: qty_{zoho_item_id}, counted_{zoho_item_id},
     #                         lot_{zoho_item_id}, photo_{zoho_item_id}
@@ -199,7 +311,9 @@ async def submit_receiving(
     results: list[dict] = []
     zoho_submissions: list[ZohoReceiveSubmission] = []  # for zoho-integration-service
     po: PurchaseOrder | None = None
-    luma_operation_id = str(uuid.uuid4())
+    # Use submission_id as the operation id so each BoxReceipt's
+    # box_number falls under the same prefix the dedup check looks for.
+    luma_operation_id = submission_id
 
     for i, zid in enumerate(zoho_item_ids):
         qty_str = (form.get(f"qty_{zid}") or "").strip()
@@ -246,7 +360,9 @@ async def submit_receiving(
         confidence = compute_confidence(counted)
         luma_status = compute_luma_readiness(item.material_code)
         now = datetime.utcnow()
-        box_number = f"RCPT-{luma_operation_id[:8]}-{i+1}"
+        # box_number prefix is anchored to submission_id (= luma_operation_id);
+        # see _submission_box_prefix.
+        box_number = f"{_submission_box_prefix(luma_operation_id)}{i+1}"
 
         box = BoxReceipt(
             packtrack_receipt_id=str(uuid.uuid4()),

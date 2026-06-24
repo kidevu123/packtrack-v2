@@ -36,15 +36,70 @@ def _recompute_daily_usage_rate(session: Session, item_id: int) -> float:
 
 
 def process_luma_consumption(session: Session, payload: dict) -> dict:
-    """Process one consumption push from Luma. Idempotent on (finished_lot_id, item)."""
+    """Process one consumption push from Luma. Idempotent on (finished_lot_id, item).
+
+    Partial success is supported: one malformed entry never aborts the
+    whole batch. Per-entry outcomes:
+
+    * ``updated``              — stock decremented, MaterialConsumptionEvent created
+    * ``already_processed``    — idempotent replay (UNIQUE finished_lot_id+item_id)
+    * ``skipped_not_found``    — material_code not in Item table
+    * ``skipped_invalid``      — entry malformed or violates a contract rule
+                                 (missing material_code, missing qty_consumed,
+                                 non-numeric qty, negative qty). Reason in ``reason``.
+    """
     finished_lot_id: str = payload["finished_lot_id"]
     finished_lot_number: str = payload.get("finished_lot_number", "")
     consumed_at = datetime.fromisoformat(payload["released_at"].rstrip("Z"))
     results: list[dict] = []
 
     for mat in payload.get("consumed_materials", []):
-        material_code: str = mat["material_code"]
-        qty = float(mat["qty_consumed"])
+        # ── P0-3: missing material_code must not crash the batch ───────
+        material_code = (mat.get("material_code") or "").strip()
+        if not material_code:
+            logger.warning("consumption: entry missing material_code — skipping (%r)", mat)
+            results.append({
+                "material_code": None,
+                "status": "skipped_invalid",
+                "reason": "missing material_code",
+            })
+            continue
+
+        # ── P0-2: negative or non-numeric qty must not invert the
+        #          stock subtraction. Reject the entry, do not touch stock.
+        raw_qty = mat.get("qty_consumed")
+        if raw_qty is None:
+            logger.warning("consumption: %s missing qty_consumed — skipping", material_code)
+            results.append({
+                "material_code": material_code,
+                "status": "skipped_invalid",
+                "reason": "missing qty_consumed",
+            })
+            continue
+        try:
+            qty = float(raw_qty)
+        except (TypeError, ValueError):
+            logger.warning(
+                "consumption: %s non-numeric qty_consumed %r — skipping",
+                material_code, raw_qty,
+            )
+            results.append({
+                "material_code": material_code,
+                "status": "skipped_invalid",
+                "reason": "non-numeric qty_consumed",
+            })
+            continue
+        if qty < 0:
+            logger.warning(
+                "consumption: %s rejected negative qty_consumed %g — skipping",
+                material_code, qty,
+            )
+            results.append({
+                "material_code": material_code,
+                "status": "skipped_invalid",
+                "reason": f"negative qty_consumed ({qty})",
+            })
+            continue
 
         item = session.exec(
             select(Item).where(Item.material_code == material_code)

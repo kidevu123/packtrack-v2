@@ -102,18 +102,18 @@ Reverse-engineered from `packtrack/services/receiving.py`, `packtrack/services/c
 
 ## 7. Known gaps
 
-| ID | Severity | Description |
-|---|---|---|
-| **P0-1** | data integrity | Double-submitting the receiving form creates two distinct `packtrack_receipt_id` UUIDs → two distinct Luma pushes. Luma may or may not dedup; PackTrack assumes nothing. No double-submit guard in `submit_receiving`. |
-| **P0-2** | data integrity | `process_luma_consumption` accepts negative `qty_consumed` and INCREMENTS stock (`max(0, prev - (-x)) = prev + x`). Documented by `tests/test_luma_consumption_edges.py::test_negative_qty_currently_increments_stock_BUG`. Need product decision on the correct semantic (reject / clamp / treat as correction event with separate sign-aware ledger). |
-| **P0-3** | crash on malformed | `consumed_materials[*].material_code` is accessed without a guard; a missing key raises `KeyError` → 500. Should return `skipped_invalid` and continue the batch. |
-| **G1** | inconsistency | Three different header names for the same shared secret: outbound `x-packtrack-secret` (receipts/items), outbound `X-Luma-PackTrack-Secret` (BOM fetch), inbound `x-luma-packtrack-secret` (consumption). HTTP header names are case-insensitive, but the *content* names differ. Pick one canonical name on each direction. |
-| **P1-1** | observability | `/healthz` has no `luma_configured` flag — operators can't see at a glance whether the integration is wired up. Easy add: a `settings.luma_configured` property + one extra healthz field. |
-| **P1-2** | observability | No global retry path — operators must visit each affected PO. A cron / admin page that finds all `FAILED|NOT_READY` boxes across all POs and re-attempts would close this. |
-| **P2-1** | maintainability | Items endpoint URL derived as `LUMA_RECEIPT_WEBHOOK_URL.rsplit('/', 1)[0] + "/items"` — brittle. Better: a dedicated `LUMA_ITEMS_URL` env or compose from `LUMA_URL`. |
-| **P2-2** | maintainability | BOM cache has no invalidation — a new product on the Luma side takes up to 1 hour to surface. Adequate for now; revisit when forecast cadence tightens. |
-| **P2-3** | test coverage | No test exercises the **submit_receiving** route end-to-end against a mocked Luma — only the helpers are unit-tested. Adding it requires the FastAPI app spin-up with a SQLite stand-in (the consumption tests already do this; receive needs Postgres JSONB workaround). |
-| **P3** | docs | This contract was implicit until now; the surface has grown faster than docs. |
+| ID | Severity | Status | Description |
+|---|---|---|---|
+| **P0-1** | data integrity | ✅ **Fixed in v2.4.1** | Receiving form renders a hidden `submission_id`. POST handler returns 400 if absent and short-circuits to an idempotent "already processed" render when the same id already produced BoxReceipts on this PO. The existing `uq_box_receipts_po_box` UNIQUE constraint (`box_number = "RCPT-{submission_id[:12]}-{i+1}"`) is the durable backstop. Covered by `tests/test_receiving_idempotency.py`. |
+| **P0-2** | data integrity | ✅ **Fixed in v2.4.1** | `process_luma_consumption` rejects negative `qty_consumed` as `skipped_invalid` (`reason: "negative qty_consumed (...)"`). Stock untouched; no `MaterialConsumptionEvent` row written. Non-numeric and missing `qty_consumed` go through the same skip path. |
+| **P0-3** | crash on malformed | ✅ **Fixed in v2.4.1** | Per-entry missing `material_code` is reported as `skipped_invalid` (`reason: "missing material_code"`) and the batch continues processing the remaining valid entries. No more `KeyError`/500 from one malformed entry. |
+| **G1** | inconsistency | open | Three different header names for the same shared secret: outbound `x-packtrack-secret` (receipts/items), outbound `X-Luma-PackTrack-Secret` (BOM fetch), inbound `x-luma-packtrack-secret` (consumption). HTTP header names are case-insensitive, but the *content* names differ. Pick one canonical name on each direction. |
+| **P1-1** | observability | open | `/healthz` has no `luma_configured` flag — operators can't see at a glance whether the integration is wired up. Easy add: a `settings.luma_configured` property + one extra healthz field. |
+| **P1-2** | observability | open | No global retry path — operators must visit each affected PO. A cron / admin page that finds all `FAILED|NOT_READY` boxes across all POs and re-attempts would close this. |
+| **P2-1** | maintainability | open | Items endpoint URL derived as `LUMA_RECEIPT_WEBHOOK_URL.rsplit('/', 1)[0] + "/items"` — brittle. Better: a dedicated `LUMA_ITEMS_URL` env or compose from `LUMA_URL`. |
+| **P2-2** | maintainability | open | BOM cache has no invalidation — a new product on the Luma side takes up to 1 hour to surface. Adequate for now; revisit when forecast cadence tightens. |
+| **P2-3** | test coverage | partially closed | `tests/test_receiving_idempotency.py` now exercises the receiving POST end-to-end with a SQLite-backed TestClient + stubbed Luma/Zoho. Same pattern can be reused for retry-luma and the receipt-result-template render. |
+| **P3** | docs | ongoing | This contract was implicit until v2.4.0; kept current with each release. |
 
 ## 8. Operator troubleshooting
 
