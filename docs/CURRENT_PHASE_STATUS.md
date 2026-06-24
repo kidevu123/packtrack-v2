@@ -1,22 +1,25 @@
 # Current Phase Status
 
-## v2.3.0 — deployed and verified (2026-06-24)
+## v2.4.0 — UI polish release (active on main, not yet deployed)
 
 | | |
 |---|---|
-| **Production commit** | `a582f38814e114c61b88b3c16fd71480b52e8f96` (main) |
-| **Version** | `2.3.0` |
+| **Active version on main** | `2.4.0` |
+| **Last deployed version** | `2.3.0` (production at commit `a582f38814e114c61b88b3c16fd71480b52e8f96`, tagged `v2.3.0`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
 | **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
 | **SSO** | Public `/auth/sso` redirect derives Authentik base from `OIDC_ISSUER_URL` — no LAN-IP leaks. State + nonce TTL 1800 s. Browser login round-trip verified by operator 2026-06-24. |
-| **CSS smoke** | `scripts/smoke_test.sh --base https://packtrack.booute.duckdns.org` passes — `/static/styles.css` 43 144 bytes, sentinels present, `/login` references the stylesheet. |
-| **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) |
+| **CSS smoke** | `scripts/smoke_test.sh` passes; deploy gate asserts size + sentinels. |
+| **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
 
-**Last reconciliation:** `release/reconcile-v2.3.0` merge — preserved the entire main Phase A/C/D inventory + forecasting + UI overhaul plus the v2.2.0 Zoho integration receive path, healthz axes, SSO public-URL fix, CSS deploy gate, and operator runbook. Merge details in commit `a582f38`.
+**v2.4.0 scope:** UI polish only — `_partials/ui.html` macro library, inventory page widened + clearer per-row hierarchy, forecast page collapsed to one shared row macro with clickable summary anchors + collapsible "No demand data" section, home "Needs you" reorder items grouped into one card with View All link. **No backend, auth, deploy, Zoho integration, migrations, or routes touched.**
+
+**Previously shipped (v2.3.0):** reconciliation of the v2.2.0 Zoho integration receive path with main's Phase A/C/D inventory + forecasting + UI overhaul. Tagged `v2.3.0` at commit `a582f38`.
 
 **Open items:**
-- Optional `v2.3.0` git tag — prepared but not created; awaiting explicit approval.
+- Browser visual review of `/`, `/po`, `/inventory`, `/inventory/forecast`, `/receive` after v2.4.0 deploy.
+- Optional `v2.4.0` git tag — held for after human visual review.
 - Local-only backup branches `backup/local-{main,feature-zoho-receives}-pre-reconcile-2026-06-24` retained for now; user to decide when to delete.
 - `.claude/` (per-user Claude Code settings) intentionally left untracked.
 
