@@ -1,12 +1,12 @@
 import base64
 import json
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlmodel import Session, select
 
 from packtrack.auth import encode_session, verify_password
@@ -20,6 +20,37 @@ router = APIRouter()
 
 def _oidc_signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.PACKTRACK_SECRET_KEY, salt="oidc-state")
+
+
+# Maximum age of a signed OIDC state (and the matching nonce cookie). Set
+# wide enough to cover real human auth flows — MFA prompts, password
+# managers, accidental tab switches at Authentik all push real round-trips
+# past the old 5-minute window. The state is still single-use per browser
+# session via the nonce cookie, so widening this does not weaken CSRF
+# protection.
+_OIDC_STATE_MAX_AGE_SECONDS = 1800  # 30 minutes
+
+
+def _authentik_base() -> str:
+    """Derive the Authentik public base URL from ``OIDC_ISSUER_URL``.
+
+    Authentik exposes the standard OIDC endpoints under
+    ``{base}/application/o/`` — authorize, token, userinfo. The issuer
+    URL is the canonical source of truth for that base; deriving from
+    it means the public auth host can change in one env knob without
+    code edits, and (critically) public browser clients never get
+    redirected to LAN-only IPs.
+    """
+    parsed = urlparse(settings.OIDC_ISSUER_URL)
+    if not parsed.scheme or not parsed.netloc:
+        # The settings property `oidc_configured` already guards this,
+        # but defend against a half-set config so the operator sees a
+        # clear runtime error instead of a malformed redirect.
+        raise RuntimeError(
+            "OIDC_ISSUER_URL must be a full URL (scheme + host) — "
+            f"got {settings.OIDC_ISSUER_URL!r}"
+        )
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 # --------------------------------------------------------------------------
@@ -100,13 +131,19 @@ def sso_start(next: str = "/"):
         "state": signed_state,
     })
 
-    # Authentik's authorize endpoint is global — the client_id picks the provider
-    redirect = RedirectResponse(
-        url=f"http://192.168.1.164:9000/application/o/authorize/?{params}",
-        status_code=303,
+    # Authentik's authorize endpoint is global — the client_id picks the
+    # provider. Derive from OIDC_ISSUER_URL so public clients reach the
+    # public Authentik host (LAN IPs would 404/timeout from the open net).
+    authorize_url = f"{_authentik_base()}/application/o/authorize/?{params}"
+    redirect = RedirectResponse(url=authorize_url, status_code=303)
+    # Store signed nonce in a short-lived cookie for CSRF validation.
+    # Lifetime matches _OIDC_STATE_MAX_AGE_SECONDS so the cookie does not
+    # silently drop out before the state expires — otherwise the operator
+    # sees "state mismatch / CSRF" instead of the truthful "expired" message.
+    redirect.set_cookie(
+        "_oidc_nonce", nonce,
+        httponly=True, max_age=_OIDC_STATE_MAX_AGE_SECONDS, samesite="lax",
     )
-    # Store signed nonce in a short-lived cookie for CSRF validation
-    redirect.set_cookie("_oidc_nonce", nonce, httponly=True, max_age=300, samesite="lax")
     return redirect
 
 
@@ -134,11 +171,19 @@ def oidc_callback(
     if not code or not state:
         return fail("Invalid SSO callback — missing code or state.")
 
-    # Verify signed state (includes nonce + next URL)
+    # Verify signed state (includes nonce + next URL). Split the timeout
+    # case from the integrity case so operators see a truthful message —
+    # "expired" almost always means the user lingered at Authentik (MFA,
+    # password manager, etc.), not an attack.
     try:
-        state_data = _oidc_signer().loads(state, max_age=300)
+        state_data = _oidc_signer().loads(state, max_age=_OIDC_STATE_MAX_AGE_SECONDS)
+    except SignatureExpired:
+        return fail(
+            "Your SSO sign-in window expired before you returned from Authentik. "
+            "Click 'Sign in with SSO' to start over."
+        )
     except BadSignature:
-        return fail("SSO session expired or tampered. Please try again.")
+        return fail("SSO state signature did not verify. Please try signing in again.")
 
     # Verify nonce cookie matches to prevent CSRF
     cookie_nonce = request.cookies.get("_oidc_nonce", "")
@@ -147,8 +192,10 @@ def oidc_callback(
 
     next_url = state_data.get("next", "/") or "/"
 
-    # Exchange authorization code for tokens
-    token_url = "http://192.168.1.164:9000/application/o/token/"
+    # Exchange authorization code for tokens. Same derivation as the
+    # authorize URL — keeps both browser and server-side flows on the
+    # same public host so any TLS / DNS / proxy quirks surface as one bug.
+    token_url = f"{_authentik_base()}/application/o/token/"
     try:
         with httpx.Client(timeout=10.0) as client:
             token_resp = client.post(

@@ -178,12 +178,22 @@ def healthz() -> dict:
         db = "ok"
     except Exception as e:
         db = f"error: {e}"
+    # Three distinct Zoho-config axes, each reported separately so a reader
+    # can't conflate "live receive integration is wired" with "we still
+    # hold legacy direct-OAuth creds":
+    #   gateway_configured          — ZOHO_GATEWAY_* (read-side sync gateway)
+    #   zoho_integration_configured — ZOHO_INTEGRATION_* (write-side receives)
+    #   legacy_zoho_configured      — ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ORG_ID
+    # ``zoho_configured`` is kept as an alias of ``legacy_zoho_configured``
+    # so external monitors that already parse this field don't break.
     return {
         "ok": True,
         "version": __version__,
         "db": db,
         "gateway_configured": settings.gateway_configured,
-        "zoho_configured": settings.zoho_configured,
+        "zoho_integration_configured": settings.zoho_integration_configured,
+        "legacy_zoho_configured": settings.zoho_configured,
+        "zoho_configured": settings.zoho_configured,  # deprecated alias of legacy_zoho_configured
         "telegram_configured": settings.telegram_configured,
     }
 

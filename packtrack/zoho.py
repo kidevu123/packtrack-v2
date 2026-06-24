@@ -222,6 +222,7 @@ def sync_items(session: Session) -> tuple[int, int]:
                 break
 
     updated = created = 0
+    just_created: list[Item] = []
     for raw in raw_items:
         zoho_id = str(raw.get("item_id") or "")
         if not zoho_id:
@@ -232,6 +233,7 @@ def sync_items(session: Session) -> tuple[int, int]:
             session.add(record)
             session.flush()
             created += 1
+            just_created.append(record)
         else:
             updated += 1
         record.name = (raw.get("name") or "")[:240]
@@ -251,6 +253,19 @@ def sync_items(session: Session) -> tuple[int, int]:
         except Exception as e:
             logger.debug("Image sync skipped for %s: %s", zoho_id, e)
     session.commit()
+
+    # Opportunistic Luma registration for freshly created items. Most will
+    # short-circuit (no material_code yet — assigned later at receive time)
+    # but the ones that do have a code get their Luma mapping primed without
+    # waiting for a receipt push. Failures are logged inside the helper.
+    if just_created:
+        from packtrack.services.receiving import maybe_register_with_luma
+        for it in just_created:
+            try:
+                maybe_register_with_luma(it)
+            except Exception:
+                logger.exception("post-sync Luma registration raised for item %s", it.id)
+
     return updated, created
 
 
@@ -353,6 +368,9 @@ def sync_open_pos(session: Session) -> int:
                 "quantity": float(li.get("quantity") or 0),
                 "quantity_received": float(li.get("quantity_received") or 0),
                 "item_id": str(li.get("item_id") or ""),
+                # Needed for zoho-integration-service Pack Track receive calls;
+                # without it the service returns 400 PO_LINE_ITEM_NOT_FOUND.
+                "line_item_id": str(li.get("line_item_id") or ""),
             })
         session.add(ZohoMirror(
             zoho_purchaseorder_id=zid,

@@ -78,24 +78,57 @@
 </div>
 {% endif %}
 
-{# Zoho status — only shown on initial receive, not on retry #}
-{% if not is_retry %}
+{# Zoho status — only shown on initial receive, not on retry. The receive is
+   submitted line-by-line through zoho-integration-service so each line can
+   land in a different bucket (committed / blocked / failed). #}
+{% if not is_retry and zoho_total > 0 %}
+  {% set all_committed = zoho_failed == 0 and zoho_blocked == 0 and zoho_committed > 0 %}
+  {% set has_failures = zoho_failed > 0 %}
 <div class="rounded-xl border px-5 py-4 bg-white mb-6
-            {{ 'border-emerald-200' if zoho_ok else 'border-amber-200' }}">
-  <div class="flex items-center gap-3">
-    {% if zoho_ok %}
-      <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-emerald-500 shrink-0">
+            {{ 'border-emerald-200' if all_committed else ('border-amber-200' if not has_failures else 'border-red-200') }}">
+  <div class="flex items-start gap-3">
+    {% if all_committed %}
+      <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-emerald-500 shrink-0 mt-0.5">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd"/>
       </svg>
-      <span class="text-sm font-medium text-stone-900">Zoho purchase receive created</span>
+      <div>
+        <p class="text-sm font-medium text-stone-900">
+          Zoho purchase receive committed
+          {% if zoho_committed > 1 %}({{ zoho_committed }} lines){% endif %}
+        </p>
+        <p class="text-xs text-stone-500 mt-0.5">Sent via zoho-integration-service.</p>
+      </div>
     {% else %}
-      <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-amber-500 shrink-0">
+      <svg viewBox="0 0 20 20" fill="currentColor"
+           class="size-5 shrink-0 mt-0.5 {{ 'text-red-500' if has_failures else 'text-amber-500' }}">
         <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
       </svg>
-      <div>
-        <p class="text-sm font-medium text-stone-900">Zoho purchase receive failed</p>
-        <p class="text-xs text-amber-600 mt-0.5">{{ zoho_err }}</p>
-        <p class="text-xs text-stone-400 mt-0.5">The receipt is recorded in PackTrack. You can retry from Admin → Sync or create the receive manually in Zoho.</p>
+      <div class="space-y-1">
+        <p class="text-sm font-medium text-stone-900">Zoho receive status</p>
+        <p class="text-xs text-stone-600">
+          {{ zoho_committed }} committed
+          · <span class="{{ 'text-amber-600' if zoho_blocked else 'text-stone-500' }}">{{ zoho_blocked }} blocked</span>
+          · <span class="{{ 'text-red-600' if zoho_failed else 'text-stone-500' }}">{{ zoho_failed }} failed</span>
+        </p>
+        {% set has_blocked = zoho_blocked > 0 %}
+        {% if has_blocked %}
+          <p class="text-xs text-amber-700">
+            Blocked lines are recorded in PackTrack and Luma. They will reconcile
+            with Zoho when ops sets <code class="text-[10px]">ENABLE_LIVE_INVENTORY_WRITES=true</code>
+            on zoho-integration-service.
+          </p>
+        {% endif %}
+        {% if has_failures %}
+          <ul class="text-xs text-red-600 mt-1 list-disc list-inside space-y-0.5">
+            {% for r in results if r.ok and r.zoho_status not in (None, "committed", "blocked", "skipped", "disabled", "not_configured") %}
+              <li>
+                <span class="font-medium">{{ r.name }}:</span>
+                {{ r.zoho_error_code or r.zoho_status }}{% if r.zoho_msg %} — {{ r.zoho_msg }}{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <p class="text-xs text-stone-400 mt-1">The receipt is saved in PackTrack — re-submit affected lines after the underlying issue is resolved.</p>
       </div>
     {% endif %}
   </div>

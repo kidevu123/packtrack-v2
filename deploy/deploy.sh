@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Deploy PackTrack from this workstation to a Proxmox-managed LXC.
+# Canonical Pack Track deploy — the ONLY approved deploy path.
+# See docs/RUNBOOK_DEPLOY.md for the full runbook. Any out-of-band
+# deploy (manual rsync, ad-hoc `pct push`, etc.) MUST end with the
+# same Tailwind CSS build + scripts/smoke_test.sh checks this script
+# enforces, or it WILL break prod the way the v2.2.0 unstyled-UI
+# incident did.
 #
-# Defaults match the production target:
+# Defaults match production:
 #   PVE_HOST=192.168.1.190 LXC_ID=200 bash deploy/deploy.sh
 #
-# Direct-to-container SSH is still supported:
-#   LXC_HOST=192.168.1.50 bash deploy/deploy.sh
+# Direct-to-container SSH (skips the PVE jump) is also supported when
+# the workstation has key access to the LXC:
+#   LXC_HOST=192.168.1.206 bash deploy/deploy.sh
 set -Eeuo pipefail
 
 PVE_HOST="${PVE_HOST:-192.168.1.190}"
@@ -125,10 +131,27 @@ sudo -u packtrack bash -lc "
   pip install --quiet -e .
 "
 
+# Build CSS as packtrack so file ownership is correct. The output must
+# exist, exceed a sane size, and contain a few sentinel utilities —
+# without these every template renders un-styled (regression caught in
+# the v2.2.0 unstyled-UI incident).
+CSS_OUT="$APP_DIR/static/styles.css"
 sudo -u packtrack /opt/packtrack/bin/tailwindcss \
   -i "$APP_DIR/static/styles.src.css" \
-  -o "$APP_DIR/static/styles.css" \
+  -o "$CSS_OUT" \
   --minify || fail "Tailwind build failed"
+ls -la "$CSS_OUT"
+CSS_BYTES=$(wc -c <"$CSS_OUT")
+if [[ "$CSS_BYTES" -lt 5000 ]]; then
+  fail "styles.css is only ${CSS_BYTES} bytes — Tailwind build produced no utilities. Refusing to deploy."
+fi
+for sentinel in '\''bg-stone-900'\'' '\''grid'\'' '\''max-w-md'\''; do
+  if ! grep -q "\\.${sentinel}\\b" "$CSS_OUT"; then
+    fail "styles.css is missing the .${sentinel} utility — UI will render un-styled. Refusing to deploy."
+  fi
+done
+echo "✓ CSS build: ${CSS_BYTES} bytes, sentinels present"
+
 
 sudo -u packtrack bash -lc "
   set -Eeuo pipefail
@@ -161,9 +184,13 @@ fi
 
 sleep 2
 systemctl is-active --quiet packtrack.service || fail "packtrack.service is not active"
-curl -fsS http://127.0.0.1:8000/healthz >/tmp/packtrack-health.json || fail "healthz failed"
-cat /tmp/packtrack-health.json
-echo
+
+# Post-restart smoke — fails the deploy if /healthz or /static/styles.css
+# is broken. Catches both runtime crashes and the missing-CSS regression
+# that /healthz alone is blind to.
+echo "---- post-restart smoke ----"
+"$APP_DIR/scripts/smoke_test.sh" --base http://127.0.0.1:8000 || fail "post-restart smoke test failed"
+
 echo "Deploy complete. Uploads preserved at $UPLOAD_DIR."
 '
 
