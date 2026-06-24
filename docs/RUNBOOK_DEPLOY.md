@@ -1,5 +1,12 @@
 # Deploy runbook
 
+> ⚠️ **`deploy/deploy.sh` is the ONLY approved deploy path.** Every
+> other path is "out-of-band" and *must* finish with the same CSS build
+> + smoke verification described below. The September/v2.2.0 unstyled-
+> UI incident was caused by an ad-hoc `pct push` + `rsync --delete`
+> deploy that skipped the CSS build step — never repeat that pattern
+> without the verification recipe in § "Out-of-band deploys" below.
+
 ## Canonical path: `bash deploy/deploy.sh`
 
 The official path is `bash deploy/deploy.sh` from the workstation. It:

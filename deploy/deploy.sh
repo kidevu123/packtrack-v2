@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# Deploy from Mac to LXC.
+# Canonical Pack Track deploy. The ONLY approved path — see
+# docs/RUNBOOK_DEPLOY.md for the full runbook and the rules around
+# any out-of-band deploy (which must run the same CSS build + smoke
+# checks this script enforces, or it WILL break prod the same way the
+# v2.2.0 unstyled-UI incident did).
+#
 #   First run:  bash deploy/deploy.sh --first-run
 #   Updates:    bash deploy/deploy.sh
+#
+# Requires direct SSH key access to LXC_HOST (default 192.168.1.206).
+# Out-of-band deploys from hosts without that access must follow the
+# verification recipe in docs/RUNBOOK_DEPLOY.md § "Out-of-band deploys".
 set -euo pipefail
 
 LXC_HOST="${LXC_HOST:-192.168.1.206}"
