@@ -47,12 +47,27 @@ sudo -u packtrack bash -lc "
   pip install --quiet -e .
 "
 
-# Build CSS as packtrack so file ownership is correct.
+# Build CSS as packtrack so file ownership is correct. The output must
+# exist, exceed a sane size, and contain a few sentinel utilities — without
+# these every template renders un-styled (regression caught in v2.2.0).
+CSS_OUT="$APP_DIR/static/styles.css"
 sudo -u packtrack /opt/packtrack/bin/tailwindcss \
   -i "$APP_DIR/static/styles.src.css" \
-  -o "$APP_DIR/static/styles.css" \
+  -o "$CSS_OUT" \
   --minify
-ls -la "$APP_DIR/static/styles.css"
+ls -la "$CSS_OUT"
+CSS_BYTES=$(wc -c <"$CSS_OUT")
+if [[ "$CSS_BYTES" -lt 5000 ]]; then
+  echo "ERROR: styles.css is only ${CSS_BYTES} bytes — Tailwind build produced no utilities. Refusing to deploy." >&2
+  exit 1
+fi
+for sentinel in 'bg-stone-900' 'grid' 'max-w-md'; do
+  if ! grep -q "\\.${sentinel}\\b" "$CSS_OUT"; then
+    echo "ERROR: styles.css is missing the .${sentinel} utility — UI will render un-styled. Refusing to deploy." >&2
+    exit 1
+  fi
+done
+echo "✓ CSS build: ${CSS_BYTES} bytes, sentinels present"
 
 # Migrations
 sudo -u packtrack bash -lc "
@@ -84,9 +99,11 @@ systemctl restart packtrack.service
 systemctl restart caddy.service
 sleep 1
 systemctl --no-pager --lines=8 status packtrack.service || true
+
+# Post-restart smoke — fails the deploy if /healthz or /static/styles.css
+# is broken. Catches both runtime crashes and the missing-CSS regression.
 echo "----"
-curl -fsS http://127.0.0.1/healthz || true
-echo
+"$APP_DIR/scripts/smoke_test.sh" --base http://127.0.0.1
 REMOTE
 
 echo "→ done. http://${LXC_HOST}/"

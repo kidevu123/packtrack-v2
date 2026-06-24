@@ -12,3 +12,8 @@ build/
 *.egg-info/
 uploads/
 .superpowers/
+
+# Tailwind build output — generated from static/styles.src.css on every
+# deploy. Never check in the built CSS (avoids stale-asset confusion and
+# review-noise diffs).
+static/styles.css
