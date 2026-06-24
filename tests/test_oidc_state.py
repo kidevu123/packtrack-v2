@@ -45,6 +45,23 @@ def test_signer_expired_raises_signature_expired_not_generic_badsignature():
         s.loads(sig, max_age=1)
 
 
+def test_authentik_base_derived_from_issuer_url_no_lan_leak():
+    """The /auth/sso redirect target must come from OIDC_ISSUER_URL, not
+    a hardcoded LAN address. Regression guard: a public client must never
+    be redirected to 192.168.x.x. or any private RFC1918 address."""
+    settings.OIDC_ISSUER_URL = "https://auth.booute.duckdns.org/application/o/packtrack"
+    assert auth_route._authentik_base() == "https://auth.booute.duckdns.org"
+
+    settings.OIDC_ISSUER_URL = "https://idp.example.com:9000/application/o/x"
+    assert auth_route._authentik_base() == "https://idp.example.com:9000"
+
+
+def test_authentik_base_rejects_half_set_issuer():
+    settings.OIDC_ISSUER_URL = "auth.booute.duckdns.org/application/o/packtrack"
+    with pytest.raises(RuntimeError):
+        auth_route._authentik_base()
+
+
 def test_signer_tampered_raises_generic_badsignature_not_expired():
     """Tampered state must NOT come back as SignatureExpired so the error
     path stays distinct and the message stays truthful."""

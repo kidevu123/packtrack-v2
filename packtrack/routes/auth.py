@@ -1,7 +1,7 @@
 import base64
 import json
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Form, Request, Response
@@ -29,6 +29,28 @@ def _oidc_signer() -> URLSafeTimedSerializer:
 # session via the nonce cookie, so widening this does not weaken CSRF
 # protection.
 _OIDC_STATE_MAX_AGE_SECONDS = 1800  # 30 minutes
+
+
+def _authentik_base() -> str:
+    """Derive the Authentik public base URL from ``OIDC_ISSUER_URL``.
+
+    Authentik exposes the standard OIDC endpoints under
+    ``{base}/application/o/`` — authorize, token, userinfo. The issuer
+    URL is the canonical source of truth for that base; deriving from
+    it means the public auth host can change in one env knob without
+    code edits, and (critically) public browser clients never get
+    redirected to LAN-only IPs.
+    """
+    parsed = urlparse(settings.OIDC_ISSUER_URL)
+    if not parsed.scheme or not parsed.netloc:
+        # The settings property `oidc_configured` already guards this,
+        # but defend against a half-set config so the operator sees a
+        # clear runtime error instead of a malformed redirect.
+        raise RuntimeError(
+            "OIDC_ISSUER_URL must be a full URL (scheme + host) — "
+            f"got {settings.OIDC_ISSUER_URL!r}"
+        )
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 # --------------------------------------------------------------------------
@@ -109,14 +131,11 @@ def sso_start(next: str = "/"):
         "state": signed_state,
     })
 
-    auth_url = settings.OIDC_ISSUER_URL.rstrip("/").replace(
-        "/application/o/", "/application/o/"
-    )
-    # Authentik's authorize endpoint is global — the client_id picks the provider
-    redirect = RedirectResponse(
-        url=f"http://192.168.1.164:9000/application/o/authorize/?{params}",
-        status_code=303,
-    )
+    # Authentik's authorize endpoint is global — the client_id picks the
+    # provider. Derive from OIDC_ISSUER_URL so public clients reach the
+    # public Authentik host (LAN IPs would 404/timeout from the open net).
+    authorize_url = f"{_authentik_base()}/application/o/authorize/?{params}"
+    redirect = RedirectResponse(url=authorize_url, status_code=303)
     # Store signed nonce in a short-lived cookie for CSRF validation.
     # Lifetime matches _OIDC_STATE_MAX_AGE_SECONDS so the cookie does not
     # silently drop out before the state expires — otherwise the operator
@@ -173,8 +192,10 @@ def oidc_callback(
 
     next_url = state_data.get("next", "/") or "/"
 
-    # Exchange authorization code for tokens
-    token_url = f"http://192.168.1.164:9000/application/o/token/"
+    # Exchange authorization code for tokens. Same derivation as the
+    # authorize URL — keeps both browser and server-side flows on the
+    # same public host so any TLS / DNS / proxy quirks surface as one bug.
+    token_url = f"{_authentik_base()}/application/o/token/"
     try:
         with httpx.Client(timeout=10.0) as client:
             token_resp = client.post(
