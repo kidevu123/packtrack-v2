@@ -1,8 +1,20 @@
 # Current Phase Status
 
-**Phase:** P1.5 — Real Zoho item catalog sync + material_code audit gate
-**Status:** complete — 94 packaging items synced via the Zoho gateway, 45 backfilled with safe defaults, 49 require manual cleanup
-**Next unchecked phase:** P2 — Box-level receiving model **(soft-blocked on the 49-item manual cleanup; see ``docs/P1_5_MANUAL_CLEANUP.md``)**
+**Active phase:** Phase 0 — Docs/boundary correction for the
+Luma ↔ PackTrack separation (in progress).
+**Most recent completed phase:** P1.5 — Real Zoho item catalog sync +
+material_code audit gate.
+**Next planned phase:** Phase 1 — PackTrack authoritative read APIs
+for Luma (see [`PACKTRACK_BUILD_QUEUE.md`](./PACKTRACK_BUILD_QUEUE.md)).
+
+> The original P2/P3/P4/P5 box-receipt push pipeline already shipped
+> as production code (`box_receipts` schema in migration
+> `b7c2d8e1f4a9_box_receipts.py`; push code in
+> `packtrack/services/receiving.py::push_luma_receipt`). It is now
+> classified as **legacy current behavior**, retained for back-compat,
+> **not** the future architecture. See
+> [`PACKTRACK_LUMA_BOUNDARY.md`](./PACKTRACK_LUMA_BOUNDARY.md) §§ 5
+> and 10 for the supersession details.
 
 ---
 
@@ -64,25 +76,69 @@ Notable today:
 
 ## Current PackTrack ↔ Luma boundary state
 
-**Today (P0, before P2):**
+### Today (live in production)
 
-- PackTrack only records receipts at the *shipment* level
-  (`Shipment.received_quantity`, single number, no box detail).
-- On receive, PackTrack calls `zoho.adjust_stock(item_id, qty)` directly
-  against Zoho Inventory. This is an *increment* (financial inventory).
-- PackTrack does not yet talk to Luma at all. No env keys, no client, no
-  payload builder, no push button.
+The code today implements the original push-only integration. It is
+**legacy current behavior**, kept running while the new pull-first
+architecture is built.
 
-**Target (after P2–P5):**
+- PackTrack records each supplier box as a `BoxReceipt` row
+  (`packtrack/models.py`, migration
+  `b7c2d8e1f4a9_box_receipts.py`).
+- The legacy shipment-level receive route
+  (`packtrack/routes/purchase_orders.py::receive_shipment`) still
+  exists and still calls `zoho.adjust_stock(item_id, qty)` directly
+  and increments `Item.current_stock`. The new box-receipt path does
+  **not** touch `Item.current_stock`.
+- On submit, the receiving route
+  (`packtrack/routes/receiving.py::submit_receiving`) immediately
+  pushes each `BoxReceipt` to Luma's
+  `POST /api/integrations/packtrack/receipts` via
+  `packtrack/services/receiving.py::push_luma_receipt`, using
+  `x-packtrack-secret`. Pre-registration of the material is done via
+  `register_material_with_luma`.
+- A retry route exists at `POST /receive/{zoho_po_id}/retry-luma` for
+  `FAILED` / `NOT_READY` rows; no scheduled Luma reaper runs.
+- `BoxReceipt.confidence` is a single enum (`HIGH | MEDIUM`) that
+  conflates "how was it sourced?" with "has it been validated?". The
+  four-axis confidence model (see
+  [`PACKTRACK_CONFIDENCE_MODEL.md`](./PACKTRACK_CONFIDENCE_MODEL.md))
+  is **not** yet in code.
+- There is no `stock_movement` ledger, no service-token middleware,
+  no `item_class`, no Luma consumption receiver, and no Luma pull
+  client on the PackTrack side.
 
-- PackTrack records each supplier box as a `BoxReceipt` row.
-- On receive, the Zoho `adjust_stock` push continues (financial truth).
-- Receiving / owner manually pushes the box receipt to Luma via the
-  webhook at `LUMA_RECEIPT_WEBHOOK_URL` with `x-packtrack-secret`. Luma
-  owns the production-floor ledger and consumption tracking.
-- Idempotency on Luma side: `(packtrack_receipt_id, box_number)`.
+### Honest gap list (this is what Phase 0–6 will close)
 
-See `docs/PACKTRACK_LUMA_BOUNDARY.md` for the full ownership table.
+- **No stock movement ledger.** Phase 5 introduces it.
+- **`Item.current_stock` drift.** Partly Zoho-overwritten, partly
+  legacy-route incremented, never decremented; not authoritative yet.
+- **Two coexisting receive paths** (legacy `receive_shipment` vs new
+  box-receipt path). Reconciled in Phase 5/6.
+- **Push-oriented receipt integration is the only live path today.**
+  Pull APIs and Luma write paths are planned, not built.
+- **No Luma consumption receiver.** Phase 5.
+- **Single-axis `confidence` enum on `BoxReceipt`.** Phase 3 splits
+  it into `receipt_source` + `receipt_validation_status`.
+- **No `item_class` axis on `Item`.** Packaging items vs materials
+  lives only in the boundary doc until Phase 1.
+
+### Target architecture (Phase 0–6)
+
+PackTrack becomes the authoritative packaging/material inventory
+system. Luma becomes the tablet-production authority. Luma pulls from
+PackTrack on a schedule and writes back only two narrow flows
+(Luma-initiated generic material receipt; production-consumption
+events). PackTrack maintains the authoritative ledger and the
+receipt-validation status; Luma maintains production confidence and
+the user-facing forecast confidence.
+
+See [`PACKTRACK_LUMA_BOUNDARY.md`](./PACKTRACK_LUMA_BOUNDARY.md) for
+the full ownership map, [`PACKTRACK_API_SURFACE.md`](./PACKTRACK_API_SURFACE.md)
+for the planned endpoints, and
+[`PACKTRACK_CONFIDENCE_MODEL.md`](./PACKTRACK_CONFIDENCE_MODEL.md)
+for the four-axis confidence model. Phase order lives in
+[`PACKTRACK_BUILD_QUEUE.md`](./PACKTRACK_BUILD_QUEUE.md).
 
 ---
 
@@ -177,24 +233,36 @@ builder (P3) refuses payloads with missing material_code.
 | # | Risk | Severity | Mitigation |
 |---|---|---|---|
 | 1 | `Item.sku_code` is indexed but not unique. After first Zoho sync, P1 audit may discover collisions | Medium | Audit script reports them; safe-default backfill refuses ambiguous rows. Operator resolves manually before P2. |
-| 2 | Today's `receive_shipment` auto-fires `zoho.adjust_stock` — if it ever fails silently, financial inventory drifts | Low–Medium | Wrap exists; failure logs to PO event but UI doesn't surface clearly. P5 will introduce a `zoho_push` event kind alongside `luma_push` to make both auditable. |
-| 3 | Luma push is an outbound webhook — secret in env, transport is HTTP today | Medium | Caddy on the Luma side should terminate TLS; PackTrack should require `https://` in `LUMA_RECEIPT_WEBHOOK_URL` and refuse plain HTTP unless explicitly allowed for LAN. |
+| 2 | Two coexisting receive paths: legacy `receive_shipment` mutates `Item.current_stock` + Zoho; new box-receipt path does not. `current_stock` drift is real today. | Medium–High | Phase 5 introduces the authoritative `stock_movement` ledger and backfills `Item.current_stock` from receipts. Phase 6 decides the fate of `receive_shipment` (fence off vs remove). |
+| 3 | Luma push is an outbound webhook — secret in env, transport is HTTP today. After Phase 2 ships, push is no longer the primary integration but still runs alongside the Luma pull. | Medium | Caddy on the Luma side should terminate TLS; PackTrack should require `https://` in `LUMA_RECEIPT_WEBHOOK_URL` and refuse plain HTTP unless explicitly allowed for LAN. Phase 6 decides whether to demote or remove the push entirely. |
 | 4 | No tests exist; the state machine + receiving are the most fragile parts | Medium | P3 introduces the first tests (Luma payload builder). Backfill tests for the state machine before P5. |
-| 5 | Shipment-level receiving (current) collapses 100 boxes into one number | High for Luma | P2 fixes this; until P2 ships, do not push to Luma. |
-| 6 | Both PackTrack and Luma posting receipts → potential double-count if either system later treats receipt as "consumption" | High | Boundary doc explicitly forbids it. Reconciliation lives in Luma. |
+| 5 | Legacy shipment-level receiving collapses 100 boxes into one number; still wired up alongside the box-receipt path. | High for Luma | Box-receipt schema is live (migration `b7c2d8e1f4a9_box_receipts.py`). Phase 6 decides whether to fence off or remove the legacy `receive_shipment` route. |
+| 6 | Mid-migration window after Phase 3 / before Phase 5: PackTrack accepts Luma-initiated material receipts but Luma still treats its local `packaging_lots.qtyOnHand` as authoritative for some material types → duplicate inventory authority. | High | Phase 2 gates Luma's inventory view switchover behind a Luma feature flag. Phase 5 lands the consumption receiver + ledger before the flag flips for all material classes. Boundary doc § 1 / § 4 codifies the new rule: PackTrack owns the authoritative stock ledger; Luma is a consumer reporting usage back. |
 | 7 | Zoho gateway tokens expire and PackTrack only learns when a sync fails | Low | Add gateway `/health` check to PackTrack `/admin/sync` page during P8. |
-| 8 | `Shipment.item_id` is nullable; box receipt requires a hard FK to `items` | Low | P2 enforces non-null on `BoxReceipt.item_id`. |
+| 8 | `Shipment.item_id` is nullable; box receipt requires a hard FK to `items` | Resolved | `BoxReceipt.item_id` is non-null in the live schema; addressed when migration `b7c2d8e1f4a9_box_receipts.py` shipped. |
+| 9 | Single `confidence` enum on `BoxReceipt` conflates `receipt_source` and `receipt_validation_status`; cannot grow into the four-axis confidence model without a rename + migration. | Medium | Phase 3 splits it: rename `confidence` → `receipt_source` with new enum values, add `receipt_validation_status`. Backfill: `HIGH → COUNTED_AT_RECEIPT`, `MEDIUM → SUPPLIER_DECLARED`. |
+| 10 | No service-token middleware exists today; `LUMA_PACKTRACK_SECRET` is outbound-only. Phase 1 reuses the same secret for inbound Luma → PackTrack calls. | Low | Phase 1 adds `packtrack/services/api_auth.py::require_service_token`. Operationally clean; if security review later wants separate inbound/outbound secrets, that is an additive change. |
+| 11 | Luma's production tables (`workflow_events`, `batches`, `finished_lots`, `finished_lot_inputs`, `finished_lot_raw_bags`, `finished_lot_packaging_lots`, `packaging_lots.qtyOnHand` writers) are high-risk and must never be written by PackTrack. | High | Boundary doc § 8 codifies this. Every phase here is additive on the Luma side; Phase 4 explicitly builds-only (no finalization-path changes). |
 
 ---
 
-## What is **not** to be touched yet (per directive)
+## What is **not** to be touched in Phase 0 (per directive)
 
-- Luma codebase
-- TabletTracker
-- PackTrack rewrites
-- UI redesign (P9 only)
-- Automatic reorders (P7 outputs *recommendations* only)
-- Auto-push to Luma (P5 is manual button only)
+Phase 0 is docs-only. Do not edit:
+
+- Any `.py` file under `packtrack/`.
+- Any Alembic migration or template.
+- Any Luma codebase file (even for documentation mirrors — keep
+  cross-doc references read-only from PackTrack's side until Luma
+  reviews).
+- Any deploy script.
+- TabletTracker.
+- The Luma production / traceability tables listed in
+  [`PACKTRACK_LUMA_BOUNDARY.md`](./PACKTRACK_LUMA_BOUNDARY.md) § 8.
+  These remain out of scope for the whole Phase 0–6 project, not
+  only Phase 0.
+
+What ships in Phase 0: docs + `README.md` + `.env.example` only.
 
 ---
 

@@ -17,3 +17,6 @@ uploads/
 # deploy. Never check in the built CSS (avoids stale-asset confusion and
 # review-noise diffs).
 static/styles.css
+
+# Local Python venvs used for running tests outside the main .venv.
+.venv-test/

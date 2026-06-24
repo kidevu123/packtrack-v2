@@ -69,6 +69,56 @@ Restart after changes: `systemctl restart packtrack`.
 - `/healthz`  — health check (db + config status).
 - `/telegram/webhook` — set via `setWebhook` once exposed.
 
+## Luma integration
+
+PackTrack v2 is the authoritative packaging/material inventory
+system. [Luma](https://github.com/kidevu123/luma) is the authoritative
+tablet-production system. The boundary between them is documented in
+[`docs/PACKTRACK_LUMA_BOUNDARY.md`](docs/PACKTRACK_LUMA_BOUNDARY.md):
+
+- Luma **pulls** PackTrack data on a schedule (every 15 min during
+  10:00–19:00 America/New_York, 03:59 overnight, on page load,
+  manual refresh, and JIT pre-finalize) for inventory / forecast /
+  BOM views.
+- Luma has **two narrow write paths** back to PackTrack:
+  Luma-initiated generic-material receipts
+  (`POST /api/luma/material-receipts`, planned) and
+  post-finalization consumption events
+  (`POST /api/luma/consumption-events`, planned). See
+  [`docs/PACKTRACK_API_SURFACE.md`](docs/PACKTRACK_API_SURFACE.md).
+- Confidence / validation lives on **four separate axes** — never
+  collapse them. See
+  [`docs/PACKTRACK_CONFIDENCE_MODEL.md`](docs/PACKTRACK_CONFIDENCE_MODEL.md).
+
+> Today's code still uses the legacy PackTrack → Luma push path
+> (`packtrack/services/receiving.py::push_luma_receipt`). The pull
+> APIs and Luma write paths above are planned (Phase 1+), not built.
+> Phase order is in
+> [`docs/PACKTRACK_BUILD_QUEUE.md`](docs/PACKTRACK_BUILD_QUEUE.md).
+
+## Zoho receive writes
+
+Pack Track does not call Zoho directly for purchase receives. Receives go
+through
+[zoho-integration-service](https://github.com/sahiwal283/zoho-integration-service)'s
+`/zoho/pack_track/receive/{preview,commit}` endpoints. Configuration, flow,
+failure states, and a safe smoke-test recipe live in
+[`docs/PACKTRACK_ZOHO_INTEGRATION_RECEIVES.md`](docs/PACKTRACK_ZOHO_INTEGRATION_RECEIVES.md).
+
+## Deployment context
+
+PackTrack v2 runs on Proxmox:
+
+- Proxmox host: `192.168.1.190` (SSH target for ops).
+- LXC 200 container: `192.168.1.206`, app path `/opt/packtrack/app`,
+  service `packtrack.service`. This is the address
+  [`deploy/deploy.sh`](deploy/deploy.sh) rsyncs to.
+- Companion: Zoho integration service at LXC 9503,
+  `192.168.1.205:8000` (multi-brand FastAPI gateway, read-only).
+
+The older Flask `packtrack` repository is deprecated. **All new work
+happens in this v2 repository.** Do not extend or deploy the old repo.
+
 ## What this does NOT do
 
 By design — see `plan/spicy-splashing-owl.md`:
