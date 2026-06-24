@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlmodel import Session, select
 
 from packtrack.auth import encode_session, verify_password
@@ -20,6 +20,15 @@ router = APIRouter()
 
 def _oidc_signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.PACKTRACK_SECRET_KEY, salt="oidc-state")
+
+
+# Maximum age of a signed OIDC state (and the matching nonce cookie). Set
+# wide enough to cover real human auth flows — MFA prompts, password
+# managers, accidental tab switches at Authentik all push real round-trips
+# past the old 5-minute window. The state is still single-use per browser
+# session via the nonce cookie, so widening this does not weaken CSRF
+# protection.
+_OIDC_STATE_MAX_AGE_SECONDS = 1800  # 30 minutes
 
 
 # --------------------------------------------------------------------------
@@ -108,8 +117,14 @@ def sso_start(next: str = "/"):
         url=f"http://192.168.1.164:9000/application/o/authorize/?{params}",
         status_code=303,
     )
-    # Store signed nonce in a short-lived cookie for CSRF validation
-    redirect.set_cookie("_oidc_nonce", nonce, httponly=True, max_age=300, samesite="lax")
+    # Store signed nonce in a short-lived cookie for CSRF validation.
+    # Lifetime matches _OIDC_STATE_MAX_AGE_SECONDS so the cookie does not
+    # silently drop out before the state expires — otherwise the operator
+    # sees "state mismatch / CSRF" instead of the truthful "expired" message.
+    redirect.set_cookie(
+        "_oidc_nonce", nonce,
+        httponly=True, max_age=_OIDC_STATE_MAX_AGE_SECONDS, samesite="lax",
+    )
     return redirect
 
 
@@ -137,11 +152,19 @@ def oidc_callback(
     if not code or not state:
         return fail("Invalid SSO callback — missing code or state.")
 
-    # Verify signed state (includes nonce + next URL)
+    # Verify signed state (includes nonce + next URL). Split the timeout
+    # case from the integrity case so operators see a truthful message —
+    # "expired" almost always means the user lingered at Authentik (MFA,
+    # password manager, etc.), not an attack.
     try:
-        state_data = _oidc_signer().loads(state, max_age=300)
+        state_data = _oidc_signer().loads(state, max_age=_OIDC_STATE_MAX_AGE_SECONDS)
+    except SignatureExpired:
+        return fail(
+            "Your SSO sign-in window expired before you returned from Authentik. "
+            "Click 'Sign in with SSO' to start over."
+        )
     except BadSignature:
-        return fail("SSO session expired or tampered. Please try again.")
+        return fail("SSO state signature did not verify. Please try signing in again.")
 
     # Verify nonce cookie matches to prevent CSRF
     cookie_nonce = request.cookies.get("_oidc_nonce", "")
