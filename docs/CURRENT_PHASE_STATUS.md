@@ -1,18 +1,21 @@
 # Current Phase Status
 
-## v2.4.3 — UI wholesale polish (shipping)
+## v2.4.3 — UI wholesale polish (deployed + tagged)
 
 | | |
 |---|---|
 | **Active version on main** | `2.4.3` |
-| **Last deployed version** | `2.4.2` (production at commit `2524cb5`, tagged `v2.4.2`) — pending v2.4.3 deploy |
-| **Previous deployed version** | `2.4.1` (commit `a0ba7a6`, tagged `v2.4.1`) |
+| **Last deployed version** | `2.4.3` (production at commit `fe603b3`, tagged `v2.4.3`) |
+| **Previous deployed version** | `2.4.2` (commit `2524cb5`, tagged `v2.4.2`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
 | **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
 | **SSO** | Public `/auth/sso` redirect derives Authentik base from `OIDC_ISSUER_URL` — no LAN-IP leaks. State + nonce TTL 1800 s. Browser login round-trip verified by operator 2026-06-24. |
 | **CSS smoke** | `scripts/smoke_test.sh` passes; deploy gate asserts size + sentinels. |
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
+
+**v2.4.3 ship-state (2026-06-25):**
+* Deployed via canonical `deploy/deploy.sh` to LXC 200 on Proxmox `192.168.1.190`. Post-restart + external smoke tests pass. CSS build 48301 bytes.
 
 **v2.4.3 scope:** wholesale UI/UX polish — operations summary on Pipeline, inventory summary cards + filter chips (route-side aggregates), forecast "Needs setup" insight, receiving list buckets, sticky receive/PO-new action bars, PO detail two-column layout + timeline icons, `insight_card` macro, consistent `ui.page_header` across admin/search/error/login/home. No schema change. Receiving / Luma / Zoho behavior unchanged.
 
