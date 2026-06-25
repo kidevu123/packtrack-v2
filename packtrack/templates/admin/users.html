@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Users · Settings · PackTrack{% endblock %}
 {% block container_class %}max-w-3xl{% endblock %}
 {% block content %}
@@ -15,9 +16,10 @@
   {% endfor %}
 </div>
 
-<div class="flex items-center justify-between gap-4 mb-6">
-  <h1 class="text-xl font-semibold">Users</h1>
-</div>
+{{ ui.page_header(
+     title="Users",
+     subtitle="Owners can add, deactivate, or restore team members.",
+) }}
 
 {# Add user #}
 <details class="mb-6 group">

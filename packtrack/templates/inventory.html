@@ -14,9 +14,35 @@
 {% endif %}
 {{ ui.page_header(
      title="Inventory",
-     subtitle="Stock by item across vendors. Owner edits override the Zoho-synced reorder thresholds.",
+     subtitle="Zoho-synced stock, owner thresholds, and reorder guidance.",
      secondary=_secondary,
 ) }}
+
+{# ── Summary strip ─────────────────────────────────────────────────── #}
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+  {{ ui.summary_card(label="Total items", value=count_total, tone="neutral", href="/inventory") }}
+  {{ ui.summary_card(
+       label="Missing material code",
+       value=count_missing_code,
+       tone="warn",
+       href="/inventory?missing_material_code=true",
+       sub="Needs setup" if count_missing_code else "All coded",
+  ) }}
+  {{ ui.summary_card(
+       label="Critical stock",
+       value=count_critical,
+       tone="danger",
+       href="/inventory?stock_status=critical",
+       sub="At or below critical" if count_critical else "None",
+  ) }}
+  {{ ui.summary_card(
+       label="Low stock",
+       value=count_low_only,
+       tone="warn",
+       href="/inventory?stock_status=low",
+       sub="Below reorder point" if count_low_only else "None",
+  ) }}
+</div>
 
 {# ── Toolbar / filters ─────────────────────────────────────────────── #}
 <form method="get" class="mb-5 bg-white border border-stone-200 rounded-2xl p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 shadow-sm">
@@ -41,6 +67,39 @@
   </label>
   <button class="sm:col-span-1 rounded-lg bg-stone-900 text-white text-sm font-medium px-3 py-2 hover:bg-stone-800">Filter</button>
 </form>
+
+{# Active filter chips — each link drops one param, keeps the rest. #}
+{% set has_active_filters = q or vendor or stock_status or missing_material_code %}
+{% if has_active_filters %}
+<div class="mb-4 flex items-center gap-2 flex-wrap">
+  <span class="text-xs text-stone-400">Active filters:</span>
+  {% if q %}
+    <a href="?{% if vendor %}vendor={{ vendor|urlencode }}&{% endif %}{% if stock_status %}stock_status={{ stock_status }}&{% endif %}{% if missing_material_code %}missing_material_code=true{% endif %}"
+       class="inline-flex items-center gap-1 rounded-full bg-stone-100 text-stone-700 border border-stone-200 px-2.5 py-0.5 text-[11px] font-medium hover:bg-stone-200">
+      Search: {{ q }} <span class="text-stone-400">×</span>
+    </a>
+  {% endif %}
+  {% if vendor %}
+    <a href="?{% if q %}q={{ q|urlencode }}&{% endif %}{% if stock_status %}stock_status={{ stock_status }}&{% endif %}{% if missing_material_code %}missing_material_code=true{% endif %}"
+       class="inline-flex items-center gap-1 rounded-full bg-stone-100 text-stone-700 border border-stone-200 px-2.5 py-0.5 text-[11px] font-medium hover:bg-stone-200">
+      Vendor: {{ vendor }} <span class="text-stone-400">×</span>
+    </a>
+  {% endif %}
+  {% if stock_status %}
+    <a href="?{% if q %}q={{ q|urlencode }}&{% endif %}{% if vendor %}vendor={{ vendor|urlencode }}&{% endif %}{% if missing_material_code %}missing_material_code=true{% endif %}"
+       class="inline-flex items-center gap-1 rounded-full bg-stone-100 text-stone-700 border border-stone-200 px-2.5 py-0.5 text-[11px] font-medium hover:bg-stone-200">
+      Stock: {{ stock_status }} <span class="text-stone-400">×</span>
+    </a>
+  {% endif %}
+  {% if missing_material_code %}
+    <a href="?{% if q %}q={{ q|urlencode }}&{% endif %}{% if vendor %}vendor={{ vendor|urlencode }}&{% endif %}{% if stock_status %}stock_status={{ stock_status }}{% endif %}"
+       class="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[11px] font-medium hover:bg-amber-100">
+      Missing code <span class="text-amber-500">×</span>
+    </a>
+  {% endif %}
+  <a href="/inventory" class="ml-auto text-xs text-stone-500 hover:text-stone-900">Clear all</a>
+</div>
+{% endif %}
 
 {# ── List ──────────────────────────────────────────────────────────── #}
 {% if items %}

@@ -1,9 +1,12 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}{{ status_code }} · PackTrack{% endblock %}
 {% block content %}
 <div class="text-center py-16">
-  <p class="text-6xl font-light text-stone-300">{{ status_code }}</p>
+  <p class="text-6xl font-light text-stone-300 tabular-nums">{{ status_code }}</p>
   <p class="mt-4 text-stone-600">{{ detail or "Something went wrong." }}</p>
-  <a href="/" class="inline-block mt-6 text-stone-700 underline">Back to inbox</a>
+  <div class="mt-6">
+    {{ ui.button(label="Back to home", href="/", variant="secondary") }}
+  </div>
 </div>
 {% endblock %}

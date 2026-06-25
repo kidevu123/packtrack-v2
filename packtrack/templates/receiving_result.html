@@ -70,20 +70,16 @@
   {% if r.ok and not r.luma_ok %}{% set luma_has_failures.v = true %}{% endif %}
 {% endfor %}
 {% if luma_has_failures.v %}
-<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;
-            padding:14px 20px;margin-bottom:16px;display:flex;
-            align-items:center;justify-content:space-between;gap:12px;">
+<div class="flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 rounded-xl px-5 py-3.5 mb-4">
   <div>
-    <p style="font-size:13px;font-weight:600;color:#92400e;">Some items failed to push to Luma</p>
-    <p style="font-size:12px;color:#b45309;margin-top:2px;">
+    <p class="text-sm font-semibold text-amber-900">Some items failed to push to Luma</p>
+    <p class="text-xs text-amber-700 mt-0.5">
       The receipt is saved in PackTrack. Retry the Luma sync without re-recording.
     </p>
   </div>
   <form method="post" action="/receive/{{ mirror.zoho_purchaseorder_id }}/retry-luma">
     <button type="submit"
-            style="flex-shrink:0;background:#d97706;color:white;padding:8px 18px;
-                   font-size:13px;font-weight:500;border-radius:8px;border:none;
-                   cursor:pointer;white-space:nowrap;">
+            class="shrink-0 rounded-xl bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 text-sm font-semibold transition-colors whitespace-nowrap">
       Retry Luma push →
     </button>
   </form>

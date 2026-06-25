@@ -41,6 +41,13 @@ def inventory(
     }
     total = count_inventory_items(session, **filters)
     items = filter_inventory_items(session, **filters, limit=PAGE_SIZE, offset=offset)
+    # Summary cards use full-dataset counts (not filtered page totals).
+    count_total = count_inventory_items(session)
+    count_missing_code = count_inventory_items(session, missing_material_code=True)
+    count_critical = count_inventory_items(session, stock_status="critical")
+    count_low_or_critical = count_inventory_items(session, stock_status="low")
+    # Low-only excludes critical so the cards don't double-count.
+    count_low_only = max(count_low_or_critical - count_critical, 0)
     coverage = coverage_for_items(session, items)
     suggested = {it.id: suggested_reorder_qty(it) for it in items}
     total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -72,6 +79,10 @@ def inventory(
             "total": total,
             "total_pages": total_pages,
             "filter_qs": filter_qs,
+            "count_total": count_total,
+            "count_missing_code": count_missing_code,
+            "count_critical": count_critical,
+            "count_low_only": count_low_only,
         },
     )
 

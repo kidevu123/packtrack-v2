@@ -1,11 +1,11 @@
 # Current Phase Status
 
-## v2.4.2 — Inventory pagination + lazy thumbnails (deployed + tagged)
+## v2.4.3 — UI wholesale polish (shipping)
 
 | | |
 |---|---|
-| **Active version on main** | `2.4.2` |
-| **Last deployed version** | `2.4.2` (production at commit `2524cb5`, tagged `v2.4.2`) |
+| **Active version on main** | `2.4.3` |
+| **Last deployed version** | `2.4.2` (production at commit `2524cb5`, tagged `v2.4.2`) — pending v2.4.3 deploy |
 | **Previous deployed version** | `2.4.1` (commit `a0ba7a6`, tagged `v2.4.1`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
@@ -13,6 +13,8 @@
 | **SSO** | Public `/auth/sso` redirect derives Authentik base from `OIDC_ISSUER_URL` — no LAN-IP leaks. State + nonce TTL 1800 s. Browser login round-trip verified by operator 2026-06-24. |
 | **CSS smoke** | `scripts/smoke_test.sh` passes; deploy gate asserts size + sentinels. |
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
+
+**v2.4.3 scope:** wholesale UI/UX polish — operations summary on Pipeline, inventory summary cards + filter chips (route-side aggregates), forecast "Needs setup" insight, receiving list buckets, sticky receive/PO-new action bars, PO detail two-column layout + timeline icons, `insight_card` macro, consistent `ui.page_header` across admin/search/error/login/home. No schema change. Receiving / Luma / Zoho behavior unchanged.
 
 **v2.4.2 scope:** server-side pagination on `/inventory` (default 50 items per page, `?page=N`), filter-aware Prev/Next links, `loading="lazy"` on item thumbnails. Fixes browser `ERR_HTTP2_PROTOCOL_ERROR` symptom caused by NPMplus/HTTP-2 upstream truncation at the proxy buffer boundary on the previous ~740 KB single-page inventory response. Reduces a default `/inventory` response to under 200 KB. No schema change. Receiving / Luma / Zoho unchanged.
 

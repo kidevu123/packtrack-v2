@@ -1,9 +1,14 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}New PO · PackTrack{% endblock %}
 {% block container_class %}max-w-4xl{% endblock %}
 {% block content %}
-<a href="/" class="text-sm text-stone-500 hover:text-stone-900">← Home</a>
-<h1 class="text-2xl font-semibold mt-2 mb-6">New purchase order</h1>
+
+{{ ui.page_header(
+     title="New purchase order",
+     subtitle="Draft a PO; the next stage moves it into design review.",
+     secondary=[{"label": "← Back to pipeline", "href": "/po"}],
+) }}
 
 {% if not items %}
   <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 mb-4">
@@ -93,15 +98,17 @@
     </label>
   </section>
 
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-    <button name="submit_action" value="draft"
-            class="rounded-xl border border-stone-300 bg-white text-stone-800 py-3 font-medium hover:bg-stone-50">
-      Save draft
-    </button>
-    <button name="submit_action" value="design_review"
-            class="rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
-      Create PO and send to design review
-    </button>
+  <div class="sticky bottom-0 z-10 -mx-4 px-4 py-3 mt-4 border-t border-stone-200 bg-stone-50/95 supports-[backdrop-filter]:bg-stone-50/80 backdrop-blur">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-4xl mx-auto">
+      <button name="submit_action" value="draft"
+              class="rounded-xl border border-stone-300 bg-white text-stone-800 py-3 font-medium hover:bg-stone-50">
+        Save draft
+      </button>
+      <button name="submit_action" value="design_review"
+              class="rounded-xl bg-stone-900 text-white py-3 font-medium hover:bg-stone-800">
+        Create PO and send to design review
+      </button>
+    </div>
   </div>
 </form>
 

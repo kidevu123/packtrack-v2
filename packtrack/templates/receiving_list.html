@@ -1,63 +1,147 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Receiving · PackTrack{% endblock %}
 {% block container_class %}max-w-4xl{% endblock %}
 {% block content %}
-<header class="mb-6">
-  <div class="flex items-center gap-3 text-sm text-stone-500 mb-3">
-    <a href="/" class="hover:text-stone-900">Home</a>
-    <span class="text-stone-300">/</span>
-    <span class="text-stone-700">Receiving</span>
-  </div>
-  <h1 class="text-2xl font-semibold">Packaging POs — pending receipt</h1>
-  <p class="text-sm text-stone-500 mt-1">Only POs with the Packaging flag checked in Zoho appear here.</p>
-</header>
+
+{{ ui.page_header(
+     title="Receiving",
+     subtitle="Packaging POs pending warehouse receipt.",
+) }}
 
 {% if not mirrors %}
-  <div class="rounded-xl border border-stone-200 bg-white p-10 text-center text-stone-400">
-    No packaging POs in the mirror. Trigger a sync from Admin → Sync or wait for the next 30-min run.
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+    {{ ui.empty_state(
+         title="No packaging POs yet",
+         body="Trigger a sync from Settings → Sync or wait for the next 30-min run.",
+    ) }}
   </div>
 {% else %}
-  <div class="space-y-3">
-    {% for m in mirrors %}
-      {% set po = linked.get(m.zoho_purchaseorder_id) %}
-      {% set total_ordered = namespace(n=0) %}
-      {% set total_received = namespace(n=0) %}
-      {% for li in (m.line_items or []) %}
-        {% set total_ordered.n = total_ordered.n + (li.quantity | float) %}
-        {% set total_received.n = total_received.n + (li.quantity_received | float) %}
-      {% endfor %}
-      {% set fully_received = total_ordered.n > 0 and total_received.n >= total_ordered.n %}
 
-      <a href="/receive/{{ m.zoho_purchaseorder_id }}"
-         class="flex items-center gap-4 rounded-xl border bg-white px-5 py-4 hover:border-stone-400 transition-colors
-                {{ 'border-emerald-200 opacity-60' if fully_received else 'border-stone-200' }}">
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="font-semibold text-stone-900">{{ m.purchaseorder_number or m.zoho_purchaseorder_id }}</span>
-            {% if fully_received %}
-              <span class="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-medium">Fully received</span>
-            {% elif total_received.n > 0 %}
-              <span class="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px] font-medium">Partial</span>
-            {% else %}
-              <span class="rounded-full bg-stone-100 text-stone-600 px-2 py-0.5 text-[11px] font-medium">Pending</span>
-            {% endif %}
-            {% if po %}
-              <span class="text-[11px] text-stone-400">linked to PT</span>
-            {% endif %}
-          </div>
-          <div class="flex items-center gap-4 mt-1 text-sm text-stone-500">
-            <span>{{ m.vendor_name or '—' }}</span>
-            <span class="text-stone-300">·</span>
-            <span>{{ (m.line_items or []) | length }} line{{ 's' if (m.line_items or []) | length != 1 }}</span>
-            {% if m.date %}<span class="text-stone-300">·</span><span>{{ m.date }}</span>{% endif %}
-            {% if m.total %}<span class="text-stone-300">·</span><span class="font-medium text-stone-700">${{ "%.2f" | format(m.total) }}</span>{% endif %}
-          </div>
-        </div>
-        <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 text-stone-400 shrink-0">
-          <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
-        </svg>
-      </a>
-    {% endfor %}
-  </div>
+{% macro receive_card(m, fully_received, is_partial) -%}
+  {% set po = linked.get(m.zoho_purchaseorder_id) %}
+  <a href="/receive/{{ m.zoho_purchaseorder_id }}"
+     class="flex items-center gap-4 rounded-xl border bg-white px-5 py-4 hover:border-stone-400 transition-colors
+            {{ 'border-emerald-200 opacity-70' if fully_received else ('border-amber-300 shadow-sm' if is_partial else 'border-stone-200') }}">
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="font-semibold text-stone-900">{{ m.purchaseorder_number or m.zoho_purchaseorder_id }}</span>
+        {% if fully_received %}
+          {{ ui.status_badge("Fully received", tone="ok") }}
+        {% elif is_partial %}
+          {{ ui.status_badge("Partial", tone="warn") }}
+        {% else %}
+          {{ ui.status_badge("Pending", tone="muted") }}
+        {% endif %}
+        {% if po %}
+          {{ ui.status_badge("Linked to PT", tone="info", size="sm") }}
+        {% endif %}
+      </div>
+      <div class="flex items-center gap-4 mt-1 text-sm text-stone-500 flex-wrap">
+        <span>{{ m.vendor_name or '—' }}</span>
+        <span class="text-stone-300">·</span>
+        <span>{{ (m.line_items or []) | length }} line{{ 's' if (m.line_items or []) | length != 1 }}</span>
+        {% if m.date %}<span class="text-stone-300">·</span><span>{{ m.date }}</span>{% endif %}
+        {% if m.total %}<span class="text-stone-300">·</span><span class="font-medium text-stone-700 tabular-nums">${{ "%.2f" | format(m.total) }}</span>{% endif %}
+      </div>
+    </div>
+    <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 text-stone-400 shrink-0">
+      <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+    </svg>
+  </a>
+{%- endmacro %}
+
+{% set counts = namespace(pending=0, partial=0, done=0) %}
+{% for m in mirrors %}
+  {% set total_ordered = namespace(n=0) %}
+  {% set total_received = namespace(n=0) %}
+  {% for li in (m.line_items or []) %}
+    {% set total_ordered.n = total_ordered.n + (li.quantity | float) %}
+    {% set total_received.n = total_received.n + (li.quantity_received | float) %}
+  {% endfor %}
+  {% if total_ordered.n > 0 and total_received.n >= total_ordered.n %}
+    {% set counts.done = counts.done + 1 %}
+  {% elif total_received.n > 0 %}
+    {% set counts.partial = counts.partial + 1 %}
+  {% else %}
+    {% set counts.pending = counts.pending + 1 %}
+  {% endif %}
+{% endfor %}
+
+<div class="space-y-8">
+
+  {% if counts.pending > 0 %}
+  <section>
+    <div class="flex items-center gap-2 mb-3">
+      <span class="size-2 rounded-full bg-stone-400"></span>
+      <h2 class="text-sm font-semibold text-stone-700">Needs attention ({{ counts.pending }})</h2>
+    </div>
+    <div class="space-y-3">
+      {% for m in mirrors %}
+        {% set total_ordered = namespace(n=0) %}
+        {% set total_received = namespace(n=0) %}
+        {% for li in (m.line_items or []) %}
+          {% set total_ordered.n = total_ordered.n + (li.quantity | float) %}
+          {% set total_received.n = total_received.n + (li.quantity_received | float) %}
+        {% endfor %}
+        {% set fully_received = total_ordered.n > 0 and total_received.n >= total_ordered.n %}
+        {% set is_partial = total_received.n > 0 and not fully_received %}
+        {% if not fully_received and not is_partial %}
+          {{ receive_card(m, fully_received, is_partial) }}
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if counts.partial > 0 %}
+  <section>
+    <div class="flex items-center gap-2 mb-3">
+      <span class="size-2 rounded-full bg-amber-400"></span>
+      <h2 class="text-sm font-semibold text-amber-800">Partial ({{ counts.partial }})</h2>
+    </div>
+    <div class="space-y-3">
+      {% for m in mirrors %}
+        {% set total_ordered = namespace(n=0) %}
+        {% set total_received = namespace(n=0) %}
+        {% for li in (m.line_items or []) %}
+          {% set total_ordered.n = total_ordered.n + (li.quantity | float) %}
+          {% set total_received.n = total_received.n + (li.quantity_received | float) %}
+        {% endfor %}
+        {% set fully_received = total_ordered.n > 0 and total_received.n >= total_ordered.n %}
+        {% set is_partial = total_received.n > 0 and not fully_received %}
+        {% if is_partial %}
+          {{ receive_card(m, fully_received, is_partial) }}
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if counts.done > 0 %}
+  <section>
+    <div class="flex items-center gap-2 mb-3">
+      <span class="size-2 rounded-full bg-emerald-500"></span>
+      <h2 class="text-sm font-semibold text-emerald-700">Fully received ({{ counts.done }})</h2>
+    </div>
+    <div class="space-y-3">
+      {% for m in mirrors %}
+        {% set total_ordered = namespace(n=0) %}
+        {% set total_received = namespace(n=0) %}
+        {% for li in (m.line_items or []) %}
+          {% set total_ordered.n = total_ordered.n + (li.quantity | float) %}
+          {% set total_received.n = total_received.n + (li.quantity_received | float) %}
+        {% endfor %}
+        {% set fully_received = total_ordered.n > 0 and total_received.n >= total_ordered.n %}
+        {% set is_partial = total_received.n > 0 and not fully_received %}
+        {% if fully_received %}
+          {{ receive_card(m, fully_received, is_partial) }}
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+</div>
 {% endif %}
 {% endblock %}

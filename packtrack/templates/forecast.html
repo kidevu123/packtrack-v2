@@ -9,7 +9,7 @@
 
 {{ ui.page_header(
      title="Inventory Forecast",
-     subtitle="Based on 60-day sales velocity × BOM. Sea lead times applied. Click a summary card to jump to that group.",
+     subtitle="60-day sales velocity × BOM demand × lead time.",
      secondary=[{"label":"← Back to Inventory","href":"/inventory"}],
 ) }}
 
@@ -40,14 +40,24 @@
        sub="On runway",
   ) }}
   {{ ui.summary_card(
-       label="No data",
+       label="Needs setup",
        value=no_data_rows|length,
        tone="neutral",
        icon_path="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z",
        href="#no-data" if no_data_rows else None,
-       sub="No demand signal yet",
+       sub="Missing velocity or code",
   ) }}
 </div>
+
+{% if all_rows and no_data_rows|length >= 5 and (no_data_rows|length / all_rows|length) > 0.25 %}
+  {{ ui.insight_card(
+       title="Forecasting needs setup",
+       body=no_data_rows|length ~ " items can't be forecasted yet — most are missing a material_code or recent consumption data. Fill missing codes and the next sync will populate velocity.",
+       cta_label="View missing material codes →",
+       cta_href="/inventory?missing_material_code=true",
+       tone="warn",
+  ) }}
+{% endif %}
 
 {# ── Single row macro reused by all four sections ───────────────────── #}
 {% macro forecast_row(row) -%}

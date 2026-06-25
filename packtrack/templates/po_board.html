@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Pipeline · PackTrack{% endblock %}
 {% block container_class %}max-w-[1600px]{% endblock %}
 
@@ -43,14 +44,43 @@
 
 {% set any_filter = filter_stale or filter_urgency or filter_mine %}
 
-<div class="flex items-end justify-between gap-4 mb-4 flex-wrap">
-  <div>
-    <a href="/" class="text-sm text-stone-500 hover:text-stone-900">← Home</a>
-    <h1 class="text-2xl font-semibold mt-1">Pipeline</h1>
-  </div>
-  {% if user.role.value == 'owner' %}
-    <a href="/po/new" class="rounded-lg bg-stone-900 text-white px-3 py-1.5 text-sm font-medium hover:bg-stone-800">+ New PO</a>
+{# Operations summary — derived from pipeline data in-template. #}
+{% set ns = namespace(active=0, stale=0, urgent=0, production=0, pending_pi=0) %}
+{% for col in pipeline %}
+  {% if col.key not in ['received', 'cancelled'] %}
+    {% set ns.active = ns.active + col.count %}
+    {% if col.key == 'production' %}
+      {% set ns.production = col.count %}
+    {% elif col.key in ['awaiting_pi', 'pi_review'] %}
+      {% set ns.pending_pi = ns.pending_pi + col.count %}
+    {% endif %}
+    {% for c in col.cards %}
+      {% if c.is_stale %}{% set ns.stale = ns.stale + 1 %}{% endif %}
+      {% if c.po.urgency.value in ['high', 'critical'] %}{% set ns.urgent = ns.urgent + 1 %}{% endif %}
+    {% endfor %}
   {% endif %}
+{% endfor %}
+
+{% if user.role.value == 'owner' %}
+  {{ ui.page_header(
+       title="PO Pipeline",
+       subtitle="Track packaging orders from draft to shipped.",
+       primary="+ New PO",
+       primary_href="/po/new",
+  ) }}
+{% else %}
+  {{ ui.page_header(
+       title="PO Pipeline",
+       subtitle="Track packaging orders from draft to shipped.",
+  ) }}
+{% endif %}
+
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+  {{ ui.summary_card(label="Active POs", value=ns.active, tone="neutral", href="/po") }}
+  {{ ui.summary_card(label="Stale POs", value=ns.stale, tone="warn", href="/po?stale=1", sub="Needs attention" if ns.stale else "None") }}
+  {{ ui.summary_card(label="High / Critical", value=ns.urgent, tone="danger", href="/po?urgency=high", sub="Urgency flagged" if ns.urgent else "None") }}
+  {{ ui.summary_card(label="In production", value=ns.production, tone="info", href="/po#col-production") }}
+  {{ ui.summary_card(label="Pending PI", value=ns.pending_pi, tone="warn", href="/po#col-awaiting_pi", sub="Awaiting or in review" if ns.pending_pi else "None") }}
 </div>
 
 {# Filter chips. Each chip is a stand-alone link so the URL is shareable. #}

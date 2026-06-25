@@ -133,12 +133,48 @@
 {%- endmacro %}
 
 
+{# ── insight_card ────────────────────────────────────────────────────────
+   Actionable callout for "needs setup" or "do this next" guidance.
+#}
+{% macro insight_card(title, body=None, cta_label=None, cta_href=None, tone="info") -%}
+  {%- set border =
+       "border-amber-200 bg-amber-50" if tone == "warn"
+       else "border-red-200 bg-red-50" if tone == "danger"
+       else "border-blue-200 bg-blue-50" if tone == "info"
+       else "border-stone-200 bg-stone-50" -%}
+  {%- set title_color =
+       "text-amber-900" if tone == "warn"
+       else "text-red-900" if tone == "danger"
+       else "text-blue-900" if tone == "info"
+       else "text-stone-900" -%}
+  {%- set body_color =
+       "text-amber-800" if tone == "warn"
+       else "text-red-800" if tone == "danger"
+       else "text-blue-800" if tone == "info"
+       else "text-stone-600" -%}
+  {%- set cta_color =
+       "text-amber-800 hover:text-amber-950 font-semibold" if tone == "warn"
+       else "text-red-800 hover:text-red-950 font-semibold" if tone == "danger"
+       else "text-blue-800 hover:text-blue-950 font-semibold" if tone == "info"
+       else "text-stone-700 hover:text-stone-900 font-semibold" -%}
+<div class="rounded-xl border px-5 py-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 {{ border }}">
+  <div class="min-w-0">
+    <p class="text-sm font-semibold {{ title_color }}">{{ title }}</p>
+    {% if body %}<p class="text-xs mt-1 leading-relaxed {{ body_color }}">{{ body }}</p>{% endif %}
+  </div>
+  {% if cta_label and cta_href %}
+    <a href="{{ cta_href }}" class="shrink-0 text-xs transition-colors whitespace-nowrap {{ cta_color }}">{{ cta_label }}</a>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+
 {# ── button ────────────────────────────────────────────────────────────
    Variants: primary (filled stone-900), secondary (outlined), danger
    (filled red). Use these instead of hand-rolled buttons so the visual
    hierarchy stays predictable.
 #}
-{% macro button(label, href=None, variant="primary", size="md") -%}
+{% macro button(label, href=None, variant="primary", size="md", type="submit") -%}
   {%- set sz = "px-3 py-1.5 text-xs" if size == "sm" else "px-4 py-2 text-sm" -%}
   {%- if variant == "danger" -%}
     {%- set cls = "bg-red-600 hover:bg-red-700 text-white" -%}
@@ -152,7 +188,7 @@
   {%- if href -%}
     <a href="{{ href }}" class="inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors {{ sz }} {{ cls }}">{{ label }}</a>
   {%- else -%}
-    <button class="inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors {{ sz }} {{ cls }}">{{ label }}</button>
+    <button type="{{ type }}" class="inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors {{ sz }} {{ cls }}">{{ label }}</button>
   {%- endif -%}
 {%- endmacro %}
 

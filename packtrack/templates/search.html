@@ -1,10 +1,22 @@
 {% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
 {% block title %}Search · PackTrack{% endblock %}
 {% block container_class %}max-w-4xl{% endblock %}
 {% block content %}
-<form method="get" action="/search" class="mb-6">
-  <input name="q" value="{{ q }}" autofocus placeholder="Search PO numbers, item names, SKU codes, vendors…"
-         class="w-full rounded-xl border-stone-300 text-sm px-4 py-3" />
+
+{{ ui.page_header(
+     title="Search",
+     subtitle="POs, items, vendors.",
+) }}
+
+<form method="get" action="/search" class="mb-6 bg-white border border-stone-200 rounded-2xl p-3 shadow-sm">
+  <label class="relative block">
+    <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none">
+      <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
+    </svg>
+    <input name="q" value="{{ q }}" autofocus placeholder="Search PO numbers, item names, SKU codes, vendors…"
+           class="w-full pl-9 pr-4 py-2.5 rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+  </label>
 </form>
 
 {% if q %}
@@ -14,10 +26,10 @@
 {% if po_hits %}
   <section class="mb-6">
     <h2 class="text-xs font-medium uppercase tracking-wider text-stone-500 mb-2">Purchase orders</h2>
-    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
+    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
       {% for po in po_hits %}
         <li>
-          <a href="/po/{{ po.id }}" class="flex items-center justify-between gap-4 px-4 py-2.5 hover:bg-stone-50">
+          <a href="/po/{{ po.id }}" class="flex items-center justify-between gap-4 px-4 py-2.5 hover:bg-stone-50 transition-colors">
             <div class="min-w-0">
               <p class="text-sm font-medium truncate">{{ po.po_number }}</p>
               <p class="text-xs text-stone-500">{{ po.lines|length }} item(s) · {{ po.created_at.strftime('%Y-%m-%d') }}</p>
@@ -33,9 +45,9 @@
 {% if item_hits %}
   <section>
     <h2 class="text-xs font-medium uppercase tracking-wider text-stone-500 mb-2">Items</h2>
-    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden">
+    <ul class="divide-y divide-stone-200 bg-white border border-stone-200 rounded-xl overflow-hidden shadow-sm">
       {% for it in item_hits %}
-        <li class="px-4 py-2.5 flex items-center gap-3">
+        <li class="px-4 py-2.5 flex items-center gap-3 hover:bg-stone-50 transition-colors">
           {% if it.image_path %}
             <img src="/uploads/items/{{ it.image_path }}" alt="" class="size-9 rounded-md object-cover bg-stone-100 shrink-0" />
           {% else %}
@@ -53,8 +65,11 @@
 {% endif %}
 
 {% if q and not po_hits and not item_hits %}
-  <div class="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">
-    Nothing matched "{{ q }}".
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+    {{ ui.empty_state(
+         title='No matches for "' ~ q ~ '"',
+         body="Try a broader term, or browse from the Pipeline or Inventory pages.",
+    ) }}
   </div>
 {% endif %}
 {% endblock %}
