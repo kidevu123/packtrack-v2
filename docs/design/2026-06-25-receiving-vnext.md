@@ -30,6 +30,12 @@ These decisions are settled for v1. Re-opening any of them requires an explicit 
    - PackTrack receiving idempotency uses `submission_id + submission_line_index` on `box_receipts`, propagated from `Receive.submission_id` at finalize.
    - Luma compatibility `box_number = "PT-{packtrack_receipt_id}"` is kept at the `BoxReceipt` leaf.
    - Vendor case number is **never** sent as Luma's `box_number`. The two fields are semantically distinct: `ReceiveCase.vendor_case_number` is the supplier's carton label; Luma's `box_number` is the PT-side dedup mirror.
+9. **Receive number format: `R-YYYY-NNNN`.** Server-generated from a yearly sequence (e.g. `R-2026-0042`). Stable, sortable, quotable by operators. No operator override.
+10. **Permissions:** `OWNER` and `RECEIVING` have read + write on receives. `DESIGN` is read-only if it falls out cleanly; otherwise hidden in v1. No change to existing role plumbing.
+11. **Photos are per-line in v1.** A `ReceiveCaseLine` may carry zero or more photos (stored in `photo_paths` JSON, mirroring today's `BoxReceipt.photo_paths`). Per-case (whole-carton) and per-receive (whole-pallet) photo slots are deferred to a later stage.
+12. **Item search is scoped to the PO's lines in v1.** The HTMX type-ahead at `GET /receive/v2/<id>/items-search?q=…` returns only items present on `Receive.purchase_order_id`'s `po_lines`. No vendor-wide or global fallback in v1.
+13. **Concurrency: optimistic locking via `Receive.updated_at`.** Every PATCH/finalize carries the loaded `updated_at` as a token; the server rejects stale writes with a banner ("Receive was updated by someone else — reload"). No per-row locks, no DB-level row-version columns.
+14. **Carrier is free text in v1.** Plain `varchar(120)`. A curated carrier list is a later UX polish, not a v1 requirement.
 
 ---
 
@@ -412,12 +418,7 @@ Each stage ships with: migration, tests, smoke (existing `scripts/smoke_test.sh`
 
 ## 8. Open questions for the user
 
-1. **Receive number format** — `R-YYYY-NNNN` (recommended) vs `R-<short-uuid>` vs operator-chosen?
-2. **Permissions** — confirm RECEIVING + OWNER roles only (matches legacy)? Should DESIGN role be read-only on receives?
-3. **Photos** — keep per-line in v1 (matches today's pattern) and add per-case in a later pass?
-4. **Item search scope** — strictly the PO's lines (recommended) or fall back to vendor-wide on no hit?
-5. **Concurrent edits** — confirm optimistic locking via `updated_at` is acceptable for v1 (vs explicit per-row locks)?
-6. **Carrier dropdown vs free text** — start with free text (matches today), introduce a curated list later?
+*(All v1 ergonomic questions previously listed here have been answered and are now locked decisions in § 0.9–§ 0.14. None remain open as of 2026-06-25.)*
 
 ---
 
