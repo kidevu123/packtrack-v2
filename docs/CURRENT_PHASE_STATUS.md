@@ -1,13 +1,15 @@
 # Current Phase Status
 
-## v2.5.0 — Receiving vNext Stage 1 (feature branch `feature/receiving-vnext-v2.5.0-stage1`, NOT deployed)
+## v2.5.0 — Receiving vNext Stage 1 (deployed + tagged)
 
 | | |
 |---|---|
-| **Branch** | `feature/receiving-vnext-v2.5.0-stage1` (off `main` @ `eaa6439`) |
+| **Active version on main** | `2.5.0` |
+| **Last deployed version** | `2.5.0` (production at commit `c97ad6e`, tagged `v2.5.0`) |
+| **Merged via** | PR [#1](https://github.com/kidevu123/packtrack-v2/pull/1) (squash) at 2026-06-25, base `3a2a7fa` → `c97ad6e` |
 | **Alembic head** | `e1f2a3b4c5d7` (`receive_vnext_stage1`, down_revision `d5e6f7a8b9c0`) |
-| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — default **OFF**. New `/receive/v2/...` routes return 404 unless set true; legacy `/receive/{zoho_po_id}` is unchanged and remains the only enabled receive flow. |
-| **Status** | Code complete on feature branch; not merged, not deployed, not tagged. |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — default **OFF** in production. New `/receive/v2/...` routes return 404 to authenticated operators; unauthenticated probes 401 (auth gate fires first). Legacy `/receive/{zoho_po_id}` remains the only enabled receive flow until ops flips the flag. |
+| **Status** | Merged, deployed, tagged. Operator-visible behavior unchanged — vNext routes are reachable only by flipping the env var. |
 
 **v2.5.0 Stage 1 scope** (per `docs/design/2026-06-25-receiving-vnext.md` § 6 Stage 1):
 * **Schema** (additive only, no backfill, no destructive change):
@@ -22,11 +24,14 @@
 * **Validation**: empty cases allowed in draft; line requires item present on the PO + `declared_quantity > 0`; duplicate vendor case # → clean 409 (not 500) from either Postgres or SQLite.
 * **No** finalize / no BoxReceipt materialization / no Zoho push / no Luma push — all deferred to Stage 2 (v2.6.0). v2.4.1 Luma idempotency contract preserved verbatim for that future stage (`Receive.submission_id` generated at create time so it's ready).
 
-**Tests:** 16 new cases in `tests/test_receive_vnext_stage1.py`; full suite 160 passed (was 144). `ruff check .` clean.
+**Tests:** 21 cases in `tests/test_receive_vnext_stage1.py`; full suite **165 passed** on `main` after merge. `ruff check .` clean.
 
-**Notes:**
-* Branch was opened because `main` had unstaged WIP at the time (user's parallel inventory-grouping work for v2.5.0). The Stage 1 schema chains off `d5e6f7a8b9c0`, so the two v2.5.0 lines (Receiving vNext + Inventory grouping) will both apply when merged. Alembic has a single head on each branch independently.
-* No `box_receipts` Python model attributes were added for the two new FK columns — by design. The DB columns sit unused; the legacy `/receive/{zoho_po_id}` flow's `BoxReceipt` queries continue to ignore them. Stage 2 wiring will add the attributes and the materialization path together.
+**v2.5.0 ship-state (2026-06-25):**
+* Deploy via canonical `deploy/deploy.sh` to LXC 200 on Proxmox `192.168.1.190`. Post-restart smoke (8/8) passed. CSS build 50684 bytes. Migration `e1f2a3b4c5d7` applied cleanly (`d5e6f7a8b9c0 -> e1f2a3b4c5d7`).
+* `/healthz` returns `{"ok":true,"version":"2.5.0","db":"ok",...}`. Alembic current/head matches: `e1f2a3b4c5d7`.
+* `RECEIVING_VNEXT_ENABLED` unset in `/etc/packtrack/packtrack.env` and not in the uvicorn process environment — flag uses Python default `False`. Operator-visible receiving flow is the legacy `/receive/{zoho_po_id}`, unchanged.
+* `feature/receiving-vnext-v2.5.0-stage1` branch retained on origin for reference (Stage 2 will branch fresh from `main`).
+* **Next:** Stage 2 (v2.6.0) — finalize + BoxReceipt materialization + Zoho/Luma push wiring. Branch `feature/receiving-vnext-stage2-finalize` created from `c97ad6e`; plan reported separately. v2.4.1 Luma idempotency contract preserved verbatim for that work (`Receive.submission_id` already generated at create time).
 
 ## v2.5.0 — Inventory grouping + clickable item detail/edit (feature release)
 
