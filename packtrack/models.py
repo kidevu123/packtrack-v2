@@ -438,6 +438,16 @@ class BoxReceipt(SQLModel, table=True):
     photo_paths: list[str] | None = Field(default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite")))
 
     notes: str | None = None
+
+    # Receiving vNext Stage 2 (v2.6.0) — upward FKs into the case-first
+    # model. The DB columns + indexes ship in Stage 1 migration
+    # ``e1f2a3b4c5d7_receive_vnext_stage1``; this is the Python-side
+    # declaration. NULL on rows from the legacy ``/receive/{zoho_po_id}``
+    # flow, ``POST /po/{id}/boxes``, and catchup — only populated when
+    # a Receive's finalize materializes a leaf. Legacy paths untouched.
+    receive_id: int | None = Field(default=None, foreign_key="receives.id", index=True)
+    receive_case_line_id: int | None = Field(default=None, foreign_key="receive_case_lines.id")
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

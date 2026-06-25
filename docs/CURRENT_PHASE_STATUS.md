@@ -1,10 +1,51 @@
 # Current Phase Status
 
-## v2.5.1 — Real Zoho item-update path via integration service (patch release)
+## v2.6.0 — Receiving vNext Stage 2 (feature branch, NOT deployed)
 
 | | |
 |---|---|
-| **Active version on main** | `2.5.1` |
+| **Branch** | `feature/receiving-vnext-stage2-finalize` (off `main` @ `fc2e4cc`) |
+| **Alembic head** | `e1f2a3b4c5d7` (`receive_vnext_stage1`) — **no new migration** in Stage 2; the two new `box_receipts` FK columns were already added in Stage 1. |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — still default **OFF** in production. Stage 2 routes (`/receive/v2/{id}/review`, `/finalize`, `/retry-push`) 404 unless flag is on. Legacy `/receive/{zoho_po_id}` remains the only operator-visible receive flow. |
+| **Status** | Code complete on feature branch; not merged, not deployed, not tagged. Tests green (185 passed). |
+
+**v2.6.0 Stage 2 scope** (per `docs/design/2026-06-25-receiving-vnext.md` § 3.2 steps 11–15 + § 5.1):
+* **Python model surfacing** — declare `BoxReceipt.receive_id` and `BoxReceipt.receive_case_line_id` on the SQLModel class. Legacy paths still leave both NULL; only Stage 2 finalize populates them. **No migration** — the columns shipped with Stage 1.
+* **Validation service** `validate_receive_for_finalize(session, receive) → (blockers, warnings)`:
+  * Blockers: already-finalized, no-PO, parcel-missing-tracking, no cases, case missing vendor #, case with zero lines, line missing item, line qty ≤ 0.
+  * Warnings: item not on PO, over-count vs PO remaining, under-count vs PO remaining, missing material_code (→ Luma NOT_READY).
+* **Materialization service** `materialize_box_receipts(session, receive, user)`:
+  * Runs in one DB transaction; no external calls inside.
+  * One `BoxReceipt` per `ReceiveCaseLine`. Idempotent: lines that already have `box_receipt_id` are skipped (so a retry-by-mistake doesn't double-write).
+  * **v2.4.1 contract preserved verbatim**: `box_number = "PT-{packtrack_receipt_id}"`, `submission_id = Receive.submission_id`, `submission_line_index = <stable global index>` (cases by `(sequence, id)`, lines by `id`, starting at 1).
+  * Snapshots `material_code` / `material_name` / `supplier` from the Item at finalize time.
+  * Flips `Receive.status → FINALIZED`, sets `finalized_at` / `finalized_by_user_id`, emits `POEvent(kind="receive_finalized")`.
+* **Push service** `push_receive_to_integrations(...)` — runs AFTER materialization commits:
+  * Calls `submit_zoho_receives(...)` and `push_luma_receipt(...)` **byte-for-byte unchanged**. Looks up Zoho mirror + line_item_id via `PurchaseOrder.zoho_po_id` → `ZohoMirror.line_items`.
+  * Sets per-leaf `BoxReceipt.luma_push_status` (PUSHED / FAILED / NOT_READY / DUPLICATE / DRY_RUN_OK).
+  * Overall `Receive.status`: `PUSHED_OK` if every leaf is in {PUSHED, DUPLICATE, DRY_RUN_OK} for Luma AND every Zoho per-line outcome is in {committed, blocked, skipped, disabled, not_configured}; else `PUSH_FAILED`.
+  * Emits `POEvent(kind="receive_pushed_ok" | "receive_push_failed")`.
+* **Retry service** `retry_push_for_receive(...)`:
+  * Re-fires only leaves in {NOT_READY, PENDING, FAILED}. Already-PUSHED leaves are not re-pushed. Safe because Zoho still keys idempotency on `PACK_TRACK_RECEIVE_{packtrack_receipt_id}`.
+  * Auto-bumps NOT_READY → PENDING for leaves whose `material_code` was filled in between finalize and retry.
+* **Routes** (all gated by `RECEIVING_VNEXT_ENABLED`, OWNER + RECEIVING permissions):
+  * `GET /receive/v2/{id}/review` — pure read, renders blockers + warnings + finalize button.
+  * `POST /receive/v2/{id}/finalize` — 400 on any blocker, 422 on un-confirmed warnings (`confirm_warnings=true` required), otherwise materialize + push.
+  * `POST /receive/v2/{id}/retry-push` — re-fires failed/pending leaves.
+* **Templates** `receive_v2/review.html` (blockers + warnings + finalize action) and `receive_v2/result.html` (per-leaf Luma + Zoho status + retry button on failure). Reuses existing `_partials/ui.html` macros; no UI rewrite.
+
+**Tests:** 20 cases in `tests/test_receive_vnext_stage2_finalize.py`. Full suite **185 passed** (was 165; +20 new). `ruff check .` clean. Alembic head unchanged: `e1f2a3b4c5d7`. Legacy `/receive/{zoho_po_id}` regression test passes.
+
+**Notes:**
+* No schema migration in Stage 2 — the Stage 1 migration `e1f2a3b4c5d7_receive_vnext_stage1` already added the two `box_receipts` FK columns. Alembic head is unchanged.
+* `submit_zoho_receives` and `push_luma_receipt` are **not modified** — Stage 2 only adds a new caller, preserving the v2.4.1 Luma payload shape and the existing Zoho integration contract.
+* Push happens AFTER the materialization transaction commits — so a partial push outcome cannot leave dangling rows or orphan side effects.
+
+## v2.5.1 — Real Zoho item-update path via integration service (deployed)
+
+| | |
+|---|---|
+| **Last deployed version** | `2.5.1` (merged via PR #2; v2.5.0 lineage continues underneath) |
 | **Alembic head** | `d5e6f7a8b9c0` (unchanged — no schema change) |
 
 **v2.5.1 scope:** Completes the parked v2.5.0 outbound item-sync path. Editing a

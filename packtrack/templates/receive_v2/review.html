@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Review {{ receive.receive_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-[1200px]{% endblock %}
+{% block content %}
+
+{{ ui.page_header(
+     title="Review " ~ receive.receive_number,
+     subtitle=("PO " ~ po.po_number) if po else "",
+     secondary=[
+       {"label":"← Back to receive","href":"/receive/v2/" ~ receive.id},
+       {"label":"Receiving","href":"/receive"},
+     ],
+) }}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+  <div class="lg:col-span-2 space-y-5">
+
+    {% if blockers %}
+    <div class="bg-red-50 border border-red-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wider text-red-700 mb-2">
+        {{ blockers|length }} blocker{{ '' if blockers|length == 1 else 's' }} — finalize disabled
+      </p>
+      <ul class="text-sm text-red-900 space-y-1.5">
+        {% for b in blockers %}
+          <li>• <span class="font-mono text-[11px] text-red-700">{{ b.code }}</span> — {{ b.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% else %}
+    <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-sm text-emerald-800">✓ No blockers. Finalize is enabled.</p>
+    </div>
+    {% endif %}
+
+    {% if warnings %}
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wider text-amber-700 mb-2">
+        {{ warnings|length }} warning{{ '' if warnings|length == 1 else 's' }} — confirm to proceed
+      </p>
+      <ul class="text-sm text-amber-900 space-y-1.5">
+        {% for w in warnings %}
+          <li>• <span class="font-mono text-[11px] text-amber-700">{{ w.code }}</span> — {{ w.message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Cases</h2>
+      <ul class="text-sm text-stone-700 space-y-1">
+        {% for case in cases %}
+          <li>
+            <span class="font-medium">Case #{{ case.sequence }}</span>
+            — {{ case.vendor_case_number or "(no vendor case #)" }}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <aside class="lg:col-span-1 space-y-4">
+    <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Totals by item</h2>
+      {% include "receive_v2/_totals.html" with context %}
+    </div>
+
+    <form method="post" action="/receive/v2/{{ receive.id }}/finalize" class="bg-stone-50 border border-stone-200 rounded-2xl p-4 space-y-3">
+      {% if warnings %}
+        <label class="flex items-start gap-2 text-xs text-stone-700">
+          <input type="checkbox" name="confirm_warnings" value="true" class="mt-0.5 rounded border-stone-400 text-stone-900 focus:ring-0" />
+          <span>I acknowledge the {{ warnings|length }} warning{{ '' if warnings|length == 1 else 's' }} above and want to finalize anyway.</span>
+        </label>
+      {% endif %}
+      {% if can_finalize %}
+        <button class="w-full rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+          Finalize &amp; push
+        </button>
+        <p class="text-[11px] text-stone-400">
+          Materializes a BoxReceipt per line, then pushes to Zoho + Luma.
+        </p>
+      {% else %}
+        <button disabled class="w-full rounded-lg bg-stone-300 text-stone-500 text-sm font-medium px-4 py-2 cursor-not-allowed">
+          Finalize blocked
+        </button>
+        <p class="text-[11px] text-stone-500">
+          Resolve the blockers above, then return to this page.
+        </p>
+      {% endif %}
+    </form>
+  </aside>
+</div>
+{% endblock %}
