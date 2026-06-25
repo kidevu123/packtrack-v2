@@ -30,17 +30,22 @@
 <li id="item-{{ it.id }}" x-data="{ editing: false }" class="px-5 py-2.5 hover:bg-stone-50 transition-colors">
   <div class="grid grid-cols-12 gap-3 md:gap-4 items-center">
 
-    {# Item col: thumb + name + secondary metadata line #}
+    {# Item col: thumb + name + secondary metadata line. Thumb + name link to
+       the item detail/edit page. #}
     <div class="col-span-12 md:col-span-6 flex items-center gap-2.5 min-w-0">
-      {% if it.image_path %}
-        <img src="/uploads/items/{{ it.image_path }}" alt="" loading="lazy" decoding="async" class="size-10 rounded-md object-cover bg-stone-100 shrink-0" />
-      {% else %}
-        <span class="size-10 rounded-md bg-stone-100 grid place-items-center text-[11px] font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
-      {% endif %}
+      <a href="/inventory/{{ it.id }}" class="shrink-0">
+        {% if it.image_path %}
+          <img src="/uploads/items/{{ it.image_path }}" alt="" loading="lazy" decoding="async" class="size-10 rounded-md object-cover bg-stone-100 shrink-0" />
+        {% else %}
+          <span class="size-10 rounded-md bg-stone-100 grid place-items-center text-[11px] font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
+        {% endif %}
+      </a>
       <div class="min-w-0 flex-1">
-        <p class="font-medium text-sm text-stone-900 truncate leading-snug">
-          {{ it.name | replace('[Packaging]', '') | replace('[packaging]', '') | trim }}
-        </p>
+        <a href="/inventory/{{ it.id }}" class="block group/name">
+          <p class="font-medium text-sm text-stone-900 truncate leading-snug group-hover/name:text-stone-600 transition-colors">
+            {{ it.name | replace('[Packaging]', '') | replace('[packaging]', '') | trim }}
+          </p>
+        </a>
         {% if it.sku_code %}
           <p class="text-xs font-mono text-stone-500 truncate mt-0.5">{{ it.sku_code }}</p>
         {% endif %}

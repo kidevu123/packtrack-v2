@@ -1,5 +1,41 @@
 # Current Phase Status
 
+## v2.5.0 — Inventory grouping + clickable item detail/edit (feature release)
+
+| | |
+|---|---|
+| **Active version on main** | `2.5.0` |
+| **Alembic head** | `d5e6f7a8b9c0` (`item_product_line_and_push_state`, down_revision `3c8a2b1e9d40`) |
+
+**v2.5.0 scope:** The Inventory tab becomes a practical one-stop shop.
+* **Grouped browsing** — `/inventory` rows are grouped by derived brand /
+  product line (parsed from `item.name`, e.g. `FIX`, `FIX Beyond`, with a
+  `Unassigned / Generic` catch-all). New product-line chips jump between lines
+  and preserve the active search/filters; existing pagination + summary cards
+  are retained (page is never silently unbounded).
+* **Clickable item detail** — `GET /inventory/{id}` shows name, SKU, material
+  code, vendor, description, unit, stock + status, reorder/critical, daily
+  usage, sea/express lead days, last unit cost, Zoho item id, last synced, image,
+  suggested order, and open PackTrack + Zoho POs (via `coverage_for_items`).
+  Item rows link to it from the thumb/name. Non-owners are read-only.
+* **Owner edit workflow** — `POST /inventory/{id}` edits name, description,
+  material_code, vendor, unit, daily_usage_rate, reorder_point, critical_point,
+  sea_lead_days, express_lead_days (trimmed/validated). `current_stock` stays
+  read-only (no manual-adjustment pattern exists). Owner edit locks
+  `reorder_point` from Zoho overwrite, matching the inline-edit behavior.
+* **Zoho boundary (honest, not faked)** — There is **no Zoho item-update write
+  endpoint** on the read gateway or the integration service today. Editing a
+  Zoho-owned field (name/description/vendor/unit) is saved locally and parked
+  `zoho_push_status='pending'` via `services/zoho_item_sync.py` (a wireable
+  wrapper, single TODO to enable a real push). Inbound `sync_items` will **not**
+  overwrite those fields while pending, so the UI never silently reverts an
+  owner edit. No outbound loop: a push is only triggered by an explicit edit,
+  never by inbound sync. **Bidirectional item sync is NOT complete** — outbound
+  is a pending/outbox state until a write path is wired.
+* **Schema** — `items.product_line` (indexed, backfilled from names) +
+  `items.zoho_push_status/zoho_push_error/zoho_push_attempted_at`. All nullable,
+  no rewrite, safe for existing data.
+
 ## v2.4.3 — UI wholesale polish (deployed + tagged)
 
 | | |

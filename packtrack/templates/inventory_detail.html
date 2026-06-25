@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}{{ it.name|replace('[Packaging]','')|trim }} · Inventory · PackTrack{% endblock %}
+{% block container_class %}max-w-5xl{% endblock %}
+{% block content %}
+<style>[x-cloak] { display: none !important; }</style>
+
+{# Stock tone — mirrors the row partial so badges read consistently. #}
+{% set stock_tone = "ok" %}
+{% set stock_label = "Healthy" %}
+{% if it.critical_point and it.current_stock <= it.critical_point %}
+  {% set stock_tone = "danger" %}{% set stock_label = "Critical" %}
+{% elif it.reorder_point and it.current_stock <= it.reorder_point %}
+  {% set stock_tone = "warn" %}{% set stock_label = "Low / reorder" %}
+{% endif %}
+{% set days_left = (it.current_stock / it.daily_usage_rate) if it.daily_usage_rate else None %}
+{% set clean_name = it.name | replace('[Packaging]','') | replace('[packaging]','') | trim %}
+
+<div class="flex items-center gap-3 text-sm text-stone-500 mb-4">
+  <a href="/" class="hover:text-stone-900">Home</a>
+  <span class="text-stone-300">/</span>
+  <a href="/inventory" class="hover:text-stone-900">Inventory</a>
+  <span class="text-stone-300">/</span>
+  <span class="text-stone-700 truncate">{{ clean_name }}</span>
+</div>
+
+{# ── Flash ──────────────────────────────────────────────────────────── #}
+{% if saved == 'ok' %}
+  {{ ui.insight_card(title="Changes saved.", tone="info") }}
+{% elif saved == 'synced' %}
+  {{ ui.insight_card(title="Saved and synced to Zoho.", tone="info") }}
+{% elif saved == 'local' %}
+  {{ ui.insight_card(
+       title="Saved locally · Zoho sync pending",
+       body="The Zoho-owned fields (name, description, vendor, unit) were saved in PackTrack. There is no Zoho item-update path wired yet, so they are parked as pending and protected from being overwritten by the next sync.",
+       tone="warn") }}
+{% endif %}
+
+{# ── Header ─────────────────────────────────────────────────────────── #}
+<header class="flex items-start gap-4 mb-6">
+  {% if it.image_path %}
+    <img src="/uploads/items/{{ it.image_path }}" alt="" class="size-16 rounded-xl object-cover bg-stone-100 shrink-0 border border-stone-200" />
+  {% else %}
+    <span class="size-16 rounded-xl bg-stone-100 grid place-items-center text-sm font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
+  {% endif %}
+  <div class="min-w-0 flex-1">
+    <h1 class="text-2xl font-semibold tracking-tight leading-tight">{{ clean_name }}</h1>
+    <div class="flex items-center gap-2 flex-wrap mt-2">
+      {{ ui.status_badge(stock_label, tone=stock_tone) }}
+      {% if it.product_line %}{{ ui.status_badge(it.product_line, tone="muted") }}{% endif %}
+      {% if not it.material_code %}{{ ui.status_badge("No material code", tone="warn") }}{% endif %}
+      {% if it.zoho_push_status == 'pending' %}{{ ui.status_badge("Zoho sync pending", tone="warn") }}
+      {% elif it.zoho_push_status == 'failed' %}{{ ui.status_badge("Zoho sync failed", tone="danger") }}{% endif %}
+    </div>
+  </div>
+</header>
+
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+  {# ── Main column ──────────────────────────────────────────────────── #}
+  <div class="lg:col-span-8 space-y-4">
+    {% if can_edit %}
+      <form method="post" action="/inventory/{{ it.id }}"
+            class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5 space-y-4">
+        <h2 class="text-sm font-medium text-stone-700">Edit item</h2>
+
+        <label class="block">
+          <span class="text-xs text-stone-500">Name</span>
+          <input name="name" value="{{ it.name }}" maxlength="240" required
+                 class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+        </label>
+
+        <label class="block">
+          <span class="text-xs text-stone-500">Description</span>
+          <textarea name="description" rows="3"
+                    class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0">{{ it.description or '' }}</textarea>
+        </label>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-xs text-stone-500">Material code</span>
+            <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm font-mono focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Vendor</span>
+            <input name="vendor" value="{{ it.vendor or '' }}" maxlength="200"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Unit</span>
+            <input name="unit" value="{{ it.unit }}" maxlength="40"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Daily usage rate</span>
+            <input name="daily_usage_rate" type="number" step="0.01" min="0" value="{{ it.daily_usage_rate }}"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Reorder point</span>
+            <input name="reorder_point" type="number" step="1" min="0" value="{{ it.reorder_point|int }}"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Critical point</span>
+            <input name="critical_point" type="number" step="1" min="0" value="{{ it.critical_point|int }}"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Sea lead days</span>
+            <input name="sea_lead_days" type="number" step="1" min="0" value="{{ it.sea_lead_days }}"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+          </label>
+          <label class="block">
+            <span class="text-xs text-stone-500">Express lead days</span>
+            <input name="express_lead_days" type="number" step="1" min="0" value="{{ it.express_lead_days }}"
+                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+          </label>
+        </div>
+
+        <div class="flex items-center justify-between gap-3 pt-2 border-t border-stone-100">
+          <p class="text-[11px] text-stone-400">
+            On-hand stock syncs from Zoho / receipts and isn't editable here.
+            Editing name, description, vendor, or unit parks the item for Zoho sync.
+          </p>
+          <button type="submit" class="shrink-0 rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium hover:bg-stone-800 transition-colors">
+            Save changes
+          </button>
+        </div>
+      </form>
+    {% else %}
+      {# Read-only detail for non-owner roles. #}
+      <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+        <h2 class="text-sm font-medium text-stone-700 mb-3">Details</h2>
+        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div><dt class="text-stone-500 text-xs">Material code</dt><dd class="font-mono">{{ it.material_code or '—' }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Vendor</dt><dd>{{ it.vendor or '—' }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Unit</dt><dd>{{ it.unit }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Daily usage</dt><dd class="tabular-nums">{{ it.daily_usage_rate|qty }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Reorder point</dt><dd class="tabular-nums">{{ it.reorder_point|qty }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Critical point</dt><dd class="tabular-nums">{{ it.critical_point|qty }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Sea lead days</dt><dd class="tabular-nums">{{ it.sea_lead_days }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Express lead days</dt><dd class="tabular-nums">{{ it.express_lead_days }}</dd></div>
+          <div class="sm:col-span-2"><dt class="text-stone-500 text-xs">Description</dt><dd class="text-stone-700 whitespace-pre-line">{{ it.description or '—' }}</dd></div>
+        </dl>
+      </section>
+    {% endif %}
+
+    {# Open coverage / POs #}
+    <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+      <h2 class="text-sm font-medium text-stone-700 mb-3">Open purchase orders</h2>
+      {% if coverage and (coverage.packtrack_pos or coverage.zoho_pos) %}
+        <ul class="divide-y divide-stone-100 -my-2">
+          {% for po in coverage.packtrack_pos %}
+            <li class="py-2 flex items-center justify-between gap-3 text-sm">
+              <a href="/po/{{ po.id }}" class="font-medium text-stone-900 hover:text-stone-600 truncate">{{ po.po_number }}</a>
+              <span class="text-xs text-stone-500 shrink-0">{{ po.status_label }} · PackTrack</span>
+            </li>
+          {% endfor %}
+          {% for zpo in coverage.zoho_pos %}
+            <li class="py-2 flex items-center justify-between gap-3 text-sm">
+              <span class="font-medium text-stone-900 truncate">{{ zpo.purchaseorder_number or zpo.zoho_purchaseorder_id }}</span>
+              <span class="text-xs text-stone-500 shrink-0">{{ zpo.status or 'open' }} · Zoho</span>
+            </li>
+          {% endfor %}
+        </ul>
+        <p class="text-xs text-stone-400 mt-3 tabular-nums">
+          {{ (coverage.packtrack_open_qty + coverage.zoho_open_qty)|qty }} {{ it.unit }} on open orders
+        </p>
+      {% else %}
+        <p class="text-sm text-stone-400">No open purchase orders for this item.</p>
+        {% if can_edit and suggested %}
+          <a href="/po/new?item_id={{ it.id }}&qty={{ suggested }}"
+             class="inline-flex items-center gap-1 text-sm text-stone-700 hover:text-stone-900 font-medium mt-2">
+            Draft a PO for {{ suggested|qty }} {{ it.unit }} →
+          </a>
+        {% endif %}
+      {% endif %}
+    </section>
+  </div>
+
+  {# ── Side panel ───────────────────────────────────────────────────── #}
+  <aside class="lg:col-span-4 space-y-4 lg:sticky lg:top-20">
+    <section class="bg-white border border-stone-200 rounded-xl p-4">
+      <h2 class="text-sm font-medium text-stone-500 mb-3">Stock</h2>
+      <div class="flex items-baseline gap-2">
+        <span class="text-3xl font-semibold tabular-nums leading-none {{ 'text-red-600' if stock_tone == 'danger' else 'text-amber-700' if stock_tone == 'warn' else 'text-stone-900' }}">{{ it.current_stock|qty }}</span>
+        <span class="text-sm text-stone-400">{{ it.unit }} on hand</span>
+      </div>
+      <dl class="mt-4 space-y-2 text-sm">
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Status</dt><dd>{{ ui.status_badge(stock_label, tone=stock_tone, size="sm") }}</dd>
+        </div>
+        {% if days_left is not none %}
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Days of cover</dt><dd class="tabular-nums text-stone-700">{{ days_left|round(0)|int }}d</dd>
+        </div>
+        {% endif %}
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Reorder / critical</dt>
+          <dd class="tabular-nums text-stone-700">{{ it.reorder_point|qty }} / {{ it.critical_point|qty }}</dd>
+        </div>
+        {% if suggested %}
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Suggested order</dt><dd class="tabular-nums text-stone-900 font-medium">{{ suggested|qty }}</dd>
+        </div>
+        {% endif %}
+        {% if it.last_unit_cost %}
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Last unit cost</dt><dd class="tabular-nums text-stone-700">{{ it.last_unit_cost|money('USD') }}</dd>
+        </div>
+        {% endif %}
+      </dl>
+    </section>
+
+    <section class="bg-white border border-stone-200 rounded-xl p-4">
+      <h2 class="text-sm font-medium text-stone-500 mb-3">Zoho</h2>
+      <dl class="space-y-2 text-sm">
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Item ID</dt>
+          <dd class="font-mono text-xs text-stone-700 truncate">{{ it.zoho_item_id or '—' }}</dd>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Last synced</dt>
+          <dd class="tabular-nums text-stone-700">{{ it.last_synced_at.strftime('%Y-%m-%d %H:%M') if it.last_synced_at else '—' }}</dd>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <dt class="text-stone-500">Outbound sync</dt>
+          <dd>
+            {% if it.zoho_push_status == 'pending' %}{{ ui.status_badge("Pending", tone="warn", size="sm") }}
+            {% elif it.zoho_push_status == 'failed' %}{{ ui.status_badge("Failed", tone="danger", size="sm") }}
+            {% elif it.zoho_push_status == 'synced' %}{{ ui.status_badge("Synced", tone="ok", size="sm") }}
+            {% else %}<span class="text-stone-400 text-xs">In sync</span>{% endif %}
+          </dd>
+        </div>
+      </dl>
+      {% if it.zoho_push_status == 'pending' %}
+        <p class="text-[11px] text-stone-400 mt-3 leading-relaxed">Local edits to Zoho-owned fields are held until a Zoho item-update path is available. They will not be overwritten by inbound sync in the meantime.</p>
+      {% elif it.zoho_push_status == 'failed' and it.zoho_push_error %}
+        <p class="text-[11px] text-red-500 mt-3 leading-relaxed">{{ it.zoho_push_error }}</p>
+      {% endif %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

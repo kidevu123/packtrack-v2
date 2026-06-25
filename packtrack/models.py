@@ -117,6 +117,11 @@ class Item(SQLModel, table=True):
     # index in Postgres enforces no-duplicates among populated values. P1 does
     # NOT make this NOT NULL — that decision lands later, after backfill.
     material_code: str | None = Field(default=None, max_length=120, index=True)
+    # Derived brand / product line for grouped browsing on /inventory.
+    # Recomputed from ``name`` on every Zoho sync (see services/product_line.py)
+    # and backfilled for existing rows. Nullable so legacy rows are safe until
+    # the first sync/backfill runs; the UI coalesces null to the generic group.
+    product_line: str | None = Field(default=None, max_length=120, index=True)
     vendor: str | None = Field(default=None, max_length=200)
     description: str | None = None
     unit: str = Field(default="units", max_length=40)
@@ -132,6 +137,14 @@ class Item(SQLModel, table=True):
     image_path: str | None = Field(default=None, max_length=300)  # under static/uploads/items/
     last_unit_cost: float | None = None  # most recent purchase unit price
     last_synced_at: datetime | None = None
+    # Outbound (PackTrack -> Zoho) item-update sync state. No item-write path
+    # to Zoho exists yet (only PO push + receive go outbound), so an owner edit
+    # to a Zoho-owned field (name/description/vendor/unit) is saved locally and
+    # parked as ``pending`` until a write path is wired. See
+    # services/zoho_item_sync.py. ``None`` = nothing to push / in sync.
+    zoho_push_status: str | None = None  # None | pending | synced | failed
+    zoho_push_error: str | None = None
+    zoho_push_attempted_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

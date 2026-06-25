@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from packtrack.config import settings
 from packtrack.models import Item, POEvent, POStatus, PurchaseOrder, ZohoMirror
+from packtrack.services.product_line import derive_product_line
 
 logger = logging.getLogger("packtrack.zoho")
 
@@ -190,6 +191,38 @@ def _reorder_level(d: dict) -> float | None:
     return None
 
 
+def _apply_item_sync_fields(record: Item, raw: dict) -> None:
+    """Apply one Zoho item payload onto an ``Item`` record (mutates in place).
+
+    Loop / honesty protection: when an owner has edited a Zoho-owned field and
+    the edit is parked ``pending`` (no Zoho item-write path yet), the inbound
+    sync must NOT revert name/vendor/description/unit — otherwise the UI would
+    silently lose the edit. sku_code, stock, reorder level, and image always
+    track Zoho since they are not owner-editable in PackTrack.
+
+    Outbound is only ever triggered by an explicit owner edit, never from here,
+    so a sync pulling back identical values can never re-trigger an outbound
+    push (no echo loop).
+    """
+    owner_edit_pending = record.zoho_push_status == "pending"
+    if not owner_edit_pending:
+        record.name = (raw.get("name") or "")[:240]
+        record.vendor = (_vendor_name(raw) or "")[:200] or record.vendor
+        record.description = (raw.get("description") or "")[:50000] or None
+        unit = (raw.get("unit") or "").strip()
+        if unit:
+            record.unit = unit[:40]
+    record.sku_code = (raw.get("sku") or "")[:120] or None
+    record.current_stock = float(raw.get("actual_available_stock") or 0)
+    rl = _reorder_level(raw)
+    if rl is not None and not record.reorder_point_locked:
+        record.reorder_point = rl
+    # Keep the brand grouping in step with the effective (possibly
+    # owner-preserved) name on every sync.
+    record.product_line = derive_product_line(record.name)
+    record.last_synced_at = datetime.utcnow()
+
+
 def sync_items(session: Session) -> tuple[int, int]:
     """Pull packaging items from Zoho via the gateway and upsert into ``items``.
 
@@ -236,18 +269,7 @@ def sync_items(session: Session) -> tuple[int, int]:
             just_created.append(record)
         else:
             updated += 1
-        record.name = (raw.get("name") or "")[:240]
-        record.sku_code = (raw.get("sku") or "")[:120] or None
-        record.vendor = (_vendor_name(raw) or "")[:200] or record.vendor
-        record.description = (raw.get("description") or "")[:50000] or None
-        unit = (raw.get("unit") or "").strip()
-        if unit:
-            record.unit = unit[:40]
-        record.current_stock = float(raw.get("actual_available_stock") or 0)
-        rl = _reorder_level(raw)
-        if rl is not None and not record.reorder_point_locked:
-            record.reorder_point = rl
-        record.last_synced_at = datetime.utcnow()
+        _apply_item_sync_fields(record, raw)
         try:
             _sync_item_image(record, zoho_id, str(raw.get("image_id") or "") or None)
         except Exception as e:

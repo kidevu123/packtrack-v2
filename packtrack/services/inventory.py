@@ -7,6 +7,10 @@ from sqlalchemy import func
 from sqlmodel import Session, col, or_, select
 
 from packtrack.models import Item, POLine, POStatus, PurchaseOrder, ZohoMirror
+from packtrack.services.product_line import (
+    GENERIC_GROUP,
+    group_sort_key,
+)
 from packtrack.services.scope import filter_items_query, get_scope
 
 
@@ -42,9 +46,11 @@ def _inventory_stmt(
     vendor: str | None,
     stock_status: str | None,
     missing_material_code: bool,
+    group: str | None = None,
 ):
-    # Stable sort: name then id, so pages don't shuffle when names tie.
-    stmt = select(Item).order_by(Item.name, Item.id)
+    # Stable sort: product line, then name, then id — so grouped rendering
+    # stays contiguous and pages don't shuffle when names tie.
+    stmt = select(Item).order_by(Item.product_line, Item.name, Item.id)
     if not any([missing_material_code, stock_status, vendor, q]):
         stmt = stmt.where(
             or_(
@@ -68,6 +74,18 @@ def _inventory_stmt(
         stmt = stmt.where(Item.vendor.ilike(f"%{vendor.strip()}%"))
     if missing_material_code:
         stmt = stmt.where(or_(Item.material_code.is_(None), Item.material_code == ""))
+    if group:
+        if group == GENERIC_GROUP:
+            # The generic bucket also catches legacy rows with no derived line.
+            stmt = stmt.where(
+                or_(
+                    Item.product_line.is_(None),
+                    Item.product_line == "",
+                    Item.product_line == GENERIC_GROUP,
+                )
+            )
+        else:
+            stmt = stmt.where(Item.product_line == group)
     status = (stock_status or "").strip().lower()
     if status in {"critical", "low", "ok"}:
         if status == "critical":
@@ -93,13 +111,14 @@ def filter_inventory_items(
     vendor: str | None = None,
     stock_status: str | None = None,
     missing_material_code: bool = False,
+    group: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> list[Item]:
     stmt = _inventory_stmt(
         session,
         q=q, vendor=vendor, stock_status=stock_status,
-        missing_material_code=missing_material_code,
+        missing_material_code=missing_material_code, group=group,
     )
     if offset:
         stmt = stmt.offset(offset)
@@ -115,13 +134,44 @@ def count_inventory_items(
     vendor: str | None = None,
     stock_status: str | None = None,
     missing_material_code: bool = False,
+    group: str | None = None,
 ) -> int:
+    stmt = _inventory_stmt(
+        session,
+        q=q, vendor=vendor, stock_status=stock_status,
+        missing_material_code=missing_material_code, group=group,
+    ).order_by(None)
+    return session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+
+
+def group_counts(
+    session: Session,
+    *,
+    q: str | None = None,
+    vendor: str | None = None,
+    stock_status: str | None = None,
+    missing_material_code: bool = False,
+) -> list[tuple[str, int]]:
+    """Count items per product line across the (non-group) filtered set.
+
+    Powers the group chips on /inventory. Null / empty product lines roll up
+    into the generic bucket so every item is counted exactly once. The active
+    ``group`` filter is intentionally excluded so the chips always show the
+    full set of lines to jump between.
+    """
     stmt = _inventory_stmt(
         session,
         q=q, vendor=vendor, stock_status=stock_status,
         missing_material_code=missing_material_code,
     ).order_by(None)
-    return session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    sub = stmt.subquery()
+    line = func.coalesce(func.nullif(sub.c.product_line, ""), GENERIC_GROUP)
+    rows = session.exec(
+        select(line.label("line"), func.count().label("n")).group_by(line)
+    ).all()
+    counts = [(row[0], int(row[1])) for row in rows]
+    counts.sort(key=lambda pair: group_sort_key(pair[0]))
+    return counts
 
 
 def coverage_for_items(session: Session, items: list[Item]) -> dict[int, CoverageRow]:
