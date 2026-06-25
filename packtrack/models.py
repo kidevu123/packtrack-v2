@@ -111,11 +111,12 @@ class Item(SQLModel, table=True):
     zoho_item_id: str | None = Field(default=None, index=True, unique=True, max_length=80)
     name: str = Field(max_length=240, index=True)
     sku_code: str | None = Field(default=None, max_length=120, index=True)
-    # ``material_code`` is the shared identity key with Luma. Owner-controlled,
-    # decoupled from Zoho ids so a Zoho re-keying does not break Luma maps.
-    # Nullable today (existing items predate this column); a partial unique
-    # index in Postgres enforces no-duplicates among populated values. P1 does
-    # NOT make this NOT NULL — that decision lands later, after backfill.
+    # ``material_code`` is an OPTIONAL, PackTrack-owned internal identity for
+    # future Luma / BOM / consumption workflows. It is NOT required for normal
+    # inventory usage and a missing code is not a blocker — ``zoho_item_id`` is
+    # the required external sync key. Owner-controlled and decoupled from Zoho
+    # ids so a Zoho re-keying does not break Luma maps. Nullable; a partial
+    # unique index in Postgres enforces no-duplicates among populated values.
     material_code: str | None = Field(default=None, max_length=120, index=True)
     # Derived brand / product line for grouped browsing on /inventory.
     # Recomputed from ``name`` on every Zoho sync (see services/product_line.py)

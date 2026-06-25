@@ -22,11 +22,11 @@
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
   {{ ui.summary_card(label="Total items", value=count_total, tone="neutral", href="/inventory") }}
   {{ ui.summary_card(
-       label="Missing material code",
+       label="No material code",
        value=count_missing_code,
-       tone="warn",
+       tone="neutral",
        href="/inventory?missing_material_code=true",
-       sub="Needs setup" if count_missing_code else "All coded",
+       sub="Optional · for Luma/BOM" if count_missing_code else "All coded",
   ) }}
   {{ ui.summary_card(
        label="Critical stock",

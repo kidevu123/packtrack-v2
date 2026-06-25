@@ -48,7 +48,7 @@
     <div class="flex items-center gap-2 flex-wrap mt-2">
       {{ ui.status_badge(stock_label, tone=stock_tone) }}
       {% if it.product_line %}{{ ui.status_badge(it.product_line, tone="muted") }}{% endif %}
-      {% if not it.material_code %}{{ ui.status_badge("No material code", tone="warn") }}{% endif %}
+      {% if not it.material_code %}{{ ui.status_badge("No material code", tone="muted") }}{% endif %}
       {% if it.zoho_push_status == 'pending' %}{{ ui.status_badge("Zoho sync pending", tone="warn") }}
       {% elif it.zoho_push_status == 'failed' %}{{ ui.status_badge("Zoho sync failed", tone="danger") }}{% endif %}
     </div>
@@ -78,9 +78,10 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label class="block">
-            <span class="text-xs text-stone-500">Material code</span>
+            <span class="text-xs text-stone-500">Material code <span class="text-stone-400">(optional)</span></span>
             <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120"
                    class="mt-1 w-full rounded-lg border-stone-300 text-sm font-mono focus:border-stone-500 focus:ring-0" />
+            <span class="mt-1 block text-[11px] text-stone-400">PackTrack-owned internal code for future Luma/BOM/consumption. Zoho item ID is the sync key.</span>
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Vendor</span>

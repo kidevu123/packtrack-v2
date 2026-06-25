@@ -234,10 +234,17 @@ def edit_item_thresholds(
     critical_point: float = Form(0),
     daily_usage_rate: float = Form(0),
     material_code: str = Form(""),
-    vendor: str = Form(""),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
+    """Inline row editor — PackTrack-owned operational fields ONLY.
+
+    Limited to daily usage, reorder point, critical point, and material_code
+    (all PackTrack-owned, never pushed to Zoho). Zoho-owned fields (name,
+    description, vendor, unit — see ZOHO_OWNED_EDITABLE_FIELDS) are edited on
+    the detail page so they go through the pending-sync path and can never be
+    saved locally without marking Zoho sync pending.
+    """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     item = session.get(Item, item_id)
@@ -247,7 +254,6 @@ def edit_item_thresholds(
     item.critical_point = max(0.0, float(critical_point or 0))
     item.daily_usage_rate = max(0.0, float(daily_usage_rate or 0))
     item.material_code = material_code.strip() or None
-    item.vendor = vendor.strip() or None
     item.reorder_point_locked = True  # owner overrode → lock from Zoho overwrite
     session.commit()
     # HTMX swap returns the updated row fragment
@@ -256,7 +262,6 @@ def edit_item_thresholds(
         return templates.TemplateResponse(
             request, "_partials/inventory_row.html", {"it": item, "user": user}
         )
-    from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/inventory", status_code=303)
 
 

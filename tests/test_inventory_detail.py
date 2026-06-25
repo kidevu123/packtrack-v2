@@ -178,6 +178,37 @@ def test_owner_edit_threshold_only_does_not_park_pending(session, engine, monkey
     assert fresh.zoho_push_status is None  # no Zoho-owned field changed
 
 
+def test_inline_edit_updates_operational_fields_only(session, engine, monkeypatch):
+    """Inline row edit handles PackTrack-owned fields and must NOT touch the
+    Zoho-owned vendor or mark Zoho sync pending (that path lives on the detail
+    page via push_item_update)."""
+    it = _seed(session, Role.OWNER)
+    client = _client(session, engine, monkeypatch, Role.OWNER)
+    r = client.post(
+        f"/inventory/{it.id}/edit",
+        data={
+            "reorder_point": "25",
+            "critical_point": "9",
+            "daily_usage_rate": "1.5",
+            "material_code": "MC-INLINE",
+            # A stray vendor field must be ignored, not silently saved locally.
+            "vendor": "ShouldBeIgnored",
+        },
+        headers={"hx-request": "true"},
+    )
+    assert r.status_code == 200
+    session.expire_all()
+    fresh = session.get(Item, it.id)
+    assert fresh.reorder_point == 25.0
+    assert fresh.critical_point == 9.0
+    assert fresh.daily_usage_rate == 1.5
+    assert fresh.material_code == "MC-INLINE"
+    assert fresh.reorder_point_locked is True
+    # Vendor (Zoho-owned) is untouched and no pending push was created.
+    assert fresh.vendor == "Acme"
+    assert fresh.zoho_push_status is None
+
+
 def test_non_owner_cannot_edit(session, engine, monkeypatch):
     it = _seed(session, Role.AGENT)
     client = _client(session, engine, monkeypatch, Role.AGENT)
