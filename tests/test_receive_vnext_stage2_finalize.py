@@ -691,3 +691,207 @@ def test_finalize_emits_po_events(session, engine, monkeypatch):
     kinds = {e.kind for e in session.exec(select(POEvent).where(POEvent.po_id == po.id)).all()}
     assert "receive_finalized" in kinds
     assert "receive_pushed_ok" in kinds
+
+
+# ---------------------------------------------------------------------------
+# Cleanup correctness — Zoho missing-mirror / missing-line-mapping is a
+# VISIBLE failure, not a silent no-op. These tests pin the behavior so a
+# future refactor cannot accidentally re-enable the silent-success path.
+# ---------------------------------------------------------------------------
+
+
+def _po_event_for(session, po_id, kind):
+    return session.exec(
+        select(POEvent).where(POEvent.po_id == po_id, POEvent.kind == kind)
+    ).first()
+
+
+def test_missing_zoho_mirror_is_visible_failure_not_silent_pushed_ok(
+    session, engine, monkeypatch,
+):
+    """A finalized receive whose PO has no ZohoMirror must NOT become
+    PUSHED_OK — it must surface a visible Zoho failure per leaf, flip
+    Receive.status to PUSH_FAILED, and emit ``receive_push_failed``."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    calls = _stub_externals(monkeypatch)
+    _seed_user(session)
+    # with_zoho=False → PO has no zoho_po_id and no ZohoMirror row.
+    po, items, _ = _seed_po(session, n_items=2, with_zoho=False)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None), (items[1], 3, None)]),
+    ])
+    client = _client(session, engine, monkeypatch)
+    r = _finalize(client, rec.id)
+    assert r.status_code == 200  # finalize succeeds at the route layer
+    # No ZohoMirror → submit_zoho_receives must NOT have been called.
+    assert calls["zoho_submit"] == 0
+    # Result page mentions the synthetic missing_mirror status.
+    assert "missing_mirror" in r.text
+
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSH_FAILED, (
+        "missing ZohoMirror must flip the receive to PUSH_FAILED, never PUSHED_OK"
+    )
+    # POEvent records the failure with the reason bucketed.
+    ev = _po_event_for(session, po.id, "receive_push_failed")
+    assert ev is not None
+    assert "missing_mirror" in (ev.message or "")
+    # No false-success POEvent.
+    assert _po_event_for(session, po.id, "receive_pushed_ok") is None
+
+
+def test_missing_zoho_line_mapping_is_visible_failure(session, engine, monkeypatch):
+    """If the receive references an Item whose zoho_item_id is not in
+    the mirror's line_items, ``submit_zoho_receives`` returns
+    ``validation_failed/PO_LINE_ITEM_NOT_FOUND``. That must surface as
+    a per-leaf failure and PUSH_FAILED — never silent success."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _stub_externals(monkeypatch, zoho_status="validation_failed")
+    _seed_user(session)
+    po, items, _ = _seed_po(session)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None)]),
+    ])
+    r = _finalize(_client(session, engine, monkeypatch), rec.id)
+    assert r.status_code == 200
+    assert "validation_failed" in r.text
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSH_FAILED
+    ev = _po_event_for(session, po.id, "receive_push_failed")
+    assert ev is not None
+    assert "validation_failed" in (ev.message or "")
+
+
+def test_zoho_disabled_is_now_failure_not_silent_success(session, engine, monkeypatch):
+    """Per-line Zoho status ``disabled`` (operator off-switch) used to
+    be silently accepted as ``PUSHED_OK``. After the cleanup, it MUST
+    flip the receive to ``PUSH_FAILED`` — local state would otherwise
+    silently disagree with Zoho in production."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _stub_externals(monkeypatch, zoho_status="disabled")
+    _seed_user(session)
+    po, items, _ = _seed_po(session)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None)]),
+    ])
+    _finalize(_client(session, engine, monkeypatch), rec.id)
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSH_FAILED
+
+
+def test_zoho_not_configured_is_now_failure_not_silent_success(session, engine, monkeypatch):
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _stub_externals(monkeypatch, zoho_status="not_configured")
+    _seed_user(session)
+    po, items, _ = _seed_po(session)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None)]),
+    ])
+    _finalize(_client(session, engine, monkeypatch), rec.id)
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSH_FAILED
+
+
+def test_zoho_blocked_is_still_acceptable_intentional_live_writes_disabled(
+    session, engine, monkeypatch,
+):
+    """``blocked`` is the LIVE_WRITE_DISABLED state — intentional, local
+    state is consistent, must NOT cause PUSH_FAILED. The leaf still
+    surfaces the status on the result page so it's not hidden."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _stub_externals(monkeypatch, zoho_status="blocked")
+    _seed_user(session)
+    po, items, _ = _seed_po(session)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None)]),
+    ])
+    r = _finalize(_client(session, engine, monkeypatch), rec.id)
+    assert "blocked" in r.text  # operator still sees it
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSHED_OK
+
+
+def test_retry_after_zoho_mirror_repaired_succeeds(session, engine, monkeypatch):
+    """Receive finalized while the mirror was missing → PUSH_FAILED.
+    Once the mirror is synced, retry-push must re-attempt Zoho and the
+    receive must flip to PUSHED_OK. Already-successful Luma leaves are
+    not re-pushed."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    calls = _stub_externals(monkeypatch)
+    _seed_user(session)
+    # Step 1: PO has zoho_po_id but no ZohoMirror row yet.
+    po = PurchaseOrder(
+        po_number="PO-RETRY", status=POStatus.DESIGN_APPROVED,
+        created_by_id=1, created_at=datetime.utcnow(),
+        zoho_po_id="po-z-retry",
+    )
+    session.add(po)
+    session.commit()
+    session.refresh(po)
+    item = Item(
+        name="Item retry", sku_code="SKU-R", material_code="MC-R",
+        zoho_item_id="z-r", unit="EACH", current_stock=0, vendor="ACME",
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    session.add(POLine(po_id=po.id, item_id=item.id, quantity=10))
+    session.commit()
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(item, 5, None)]),
+    ])
+
+    client = _client(session, engine, monkeypatch)
+    r1 = _finalize(client, rec.id)
+    assert r1.status_code == 200
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSH_FAILED
+    # Luma was attempted (1 leaf), Zoho was NOT (no mirror).
+    assert calls["luma_push"] == 1
+    assert calls["zoho_submit"] == 0
+
+    # Step 2: ops syncs the PO; mirror row appears.
+    session.add(ZohoMirror(
+        zoho_purchaseorder_id=po.zoho_po_id,
+        purchaseorder_number=po.po_number,
+        line_items=[
+            {"item_id": item.zoho_item_id, "line_item_id": "li-r",
+             "name": item.name, "quantity": 10, "quantity_received": 0},
+        ],
+    ))
+    session.commit()
+
+    # Step 3: retry — Luma already PUSHED so it's not re-fired; Zoho now
+    # has a mirror so the submit_zoho_receives call lands.
+    r2 = client.post(f"/receive/v2/{rec.id}/retry-push")
+    assert r2.status_code == 200
+    session.refresh(rec)
+    assert rec.status == ReceiveStatus.PUSHED_OK
+    assert calls["luma_push"] == 1  # unchanged — already PUSHED is not re-pushed
+    assert calls["zoho_submit"] == 1  # retry fired Zoho
+
+
+def test_review_warns_when_po_has_no_zoho_mirror(session, engine, monkeypatch):
+    """Pre-flight visibility: review page warns operators BEFORE
+    finalize so they can fix the mirror without first finalizing."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _stub_externals(monkeypatch)
+    _seed_user(session)
+    po, items, _ = _seed_po(session, with_zoho=False)
+    rec = _seed_receive(session, session.get(User, 1), po, cases=[
+        ("C-1", [(items[0], 5, None)]),
+    ])
+    r = _client(session, engine, monkeypatch).get(f"/receive/v2/{rec.id}/review")
+    assert r.status_code == 200
+    assert "PO_NO_ZOHO_ID" in r.text
+
+
+def test_zoho_status_set_documents_disabled_and_not_configured_as_failures():
+    """Pin the policy: ``disabled`` / ``not_configured`` are NOT in the
+    OK set. Documentation + behavior must agree."""
+    from packtrack.services.receiving_v2_finalize import _ZOHO_OK_STATUSES
+    assert {"committed", "blocked", "skipped"} == _ZOHO_OK_STATUSES
+    assert "disabled" not in _ZOHO_OK_STATUSES
+    assert "not_configured" not in _ZOHO_OK_STATUSES
+    assert "validation_failed" not in _ZOHO_OK_STATUSES
+    assert "missing_mirror" not in _ZOHO_OK_STATUSES

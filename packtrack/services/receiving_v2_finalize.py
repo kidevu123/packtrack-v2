@@ -160,6 +160,35 @@ def validate_receive_for_finalize(
             code="NO_PO",
             message="Receive is not bound to a purchase order.",
         ))
+    else:
+        # Pre-flight: surface "Zoho will not be reachable" as a warning
+        # so the operator sees it before finalizing. It is NOT a blocker
+        # (the operator may still want to materialize for PT records and
+        # retry-push after re-syncing); the push service will mark the
+        # receive PUSH_FAILED if the mirror is still absent at push time.
+        po = session.get(PurchaseOrder, receive.purchase_order_id)
+        if po is not None:
+            if not (po.zoho_po_id or "").strip():
+                warnings.append(FinalizeIssue(
+                    code="PO_NO_ZOHO_ID",
+                    message=(
+                        f"PO {po.po_number} has no zoho_po_id — Zoho receive "
+                        "push will fail (re-sync the PO from Settings -> Sync first)."
+                    ),
+                ))
+            else:
+                mirror = session.exec(
+                    select(ZohoMirror).where(ZohoMirror.zoho_purchaseorder_id == po.zoho_po_id)
+                ).first()
+                if mirror is None:
+                    warnings.append(FinalizeIssue(
+                        code="ZOHO_NO_MIRROR",
+                        message=(
+                            f"No ZohoMirror row for PO {po.po_number} "
+                            f"(zoho_po_id={po.zoho_po_id}) — re-sync first or "
+                            "expect Zoho push to fail."
+                        ),
+                    ))
 
     if receive.shipment_kind == ShipmentKind.PARCEL and not (receive.tracking_number or "").strip():
         blockers.append(FinalizeIssue(
@@ -421,11 +450,34 @@ class ReceivePushOutcome:
     results: list[LeafPushResult]
 
 
-_ZOHO_OK_STATUSES = {"committed", "blocked", "skipped", "disabled", "not_configured"}
+_ZOHO_OK_STATUSES = {"committed", "blocked", "skipped"}
 """Per-line Zoho outcomes that do NOT cause the receive to be
-``PUSH_FAILED``. ``blocked`` / ``disabled`` / ``not_configured``
-means "live writes off / ops decided" — local state is consistent;
-that's deliberate non-failure."""
+``PUSH_FAILED``.
+
+  * ``committed``  — Zoho accepted the receive.
+  * ``blocked``    — zoho-integration-service has live writes turned off
+                     (``LIVE_WRITE_DISABLED``). Local state is consistent;
+                     this is an intentional operator-controlled state and
+                     the per-line Zoho status surfaces it for visibility.
+  * ``skipped``    — zero-quantity submission; nothing to send.
+
+Everything else is a real failure that must surface to the operator
+and flip ``Receive.status -> PUSH_FAILED``:
+
+  * ``disabled`` / ``not_configured`` — global integration is off in
+    config; treating these as success would silently mask "Zoho was
+    never updated" and leave PackTrack disagreeing with Zoho.
+  * ``validation_failed`` (incl. ``PO_LINE_ITOM_NOT_FOUND`` when an item
+    on the receive isn't on the synced Zoho PO mirror).
+  * ``gateway_error`` / ``rate_limited`` / ``idempotency_conflict`` /
+    ``config_error`` / ``auth_failed`` — service errors.
+  * ``missing_mirror`` — synthetic status this service emits when the
+    receive's PO has no synced ``ZohoMirror`` row (i.e. we couldn't
+    even attempt a Zoho call). See ``_synth_missing_mirror_results``.
+"""
+
+# Synthetic per-leaf statuses this service emits (not from the Zoho client).
+_ZOHO_STATUS_MISSING_MIRROR = "missing_mirror"
 
 
 def _eligible_for_push(box: BoxReceipt) -> bool:
@@ -544,10 +596,28 @@ def push_receive_to_integrations(
             zoho_error=None,
         )
 
-    # ── Zoho (one submission per eligible leaf) ────────────────────────
+    # Ensure every leaf has a baseline result entry, even ones that were
+    # not eligible for Luma re-push (so the result page shows them and
+    # the retry-after-Zoho-fix path can record their Zoho outcome).
+    for box in box_receipts:
+        if box.id not in results:
+            item_skipped = session.get(Item, box.item_id) if box.item_id else None
+            name = (item_skipped.name if item_skipped else box.material_name) or "?"
+            results[box.id] = LeafPushResult(
+                box_receipt_id=box.id, item_name=name,
+                luma_status=box.luma_push_status, luma_error=None,
+                zoho_status=None, zoho_error=None,
+            )
+
+    # ── Zoho ───────────────────────────────────────────────────────────
+    # IMPORTANT: build a submission for EVERY leaf on the receive, not
+    # just the Luma-eligible ones. A leaf can have its Luma push succeed
+    # and its Zoho push fail — on retry we still need Zoho to be re-fired
+    # for that leaf. ``submit_zoho_receives`` keys idempotency on
+    # ``PACK_TRACK_RECEIVE_{packtrack_receipt_id}`` so re-submission of
+    # already-committed leaves is safe.
     zoho_submissions: list[ZohoReceiveSubmission] = []
-    box_by_submission: dict[int, BoxReceipt] = {}
-    for box in eligible:
+    for box in box_receipts:
         item = session.get(Item, box.item_id) if box.item_id else None
         zoho_item_id = (item.zoho_item_id if item else None) or ""
         zoho_line_item_id = _zoho_line_lookup(mirror, zoho_item_id)
@@ -557,33 +627,64 @@ def push_receive_to_integrations(
             zoho_item_id=zoho_item_id,
             zoho_line_item_id=zoho_line_item_id,
             quantity=float(box.accepted_quantity or box.declared_quantity or 0),
-            item_name=item.name if item else box.material_name,
+            item_name=(item.name if item else box.material_name) or "?",
         )
         zoho_submissions.append(sub)
-        box_by_submission[box.id] = box
 
-    if mirror is not None and zoho_submissions:
+    zoho_failure_reasons: list[str] = []
+
+    if not zoho_submissions:
+        zoho_results = []
+    elif mirror is None:
+        # Receive has leaves to push but the PO has no synced ZohoMirror —
+        # we must NOT silently report this as success. The operator sees
+        # "missing_mirror" on every leaf; the receive is marked
+        # ``PUSH_FAILED`` so retry-push is available once the mirror is
+        # synced. submit_zoho_receives is intentionally not called.
+        po = session.get(PurchaseOrder, receive.purchase_order_id) if receive.purchase_order_id else None
+        zoho_po_id = (po.zoho_po_id if po else None) or ""
+        if zoho_po_id:
+            reason = (
+                f"No ZohoMirror row found for PO {po.po_number if po else '?'} "
+                f"(zoho_po_id={zoho_po_id}). Re-sync from Settings -> Sync."
+            )
+        else:
+            reason = (
+                f"PO {po.po_number if po else '?'} has no zoho_po_id; "
+                "this PO was never synced with Zoho — Zoho receive will not "
+                "happen until the PO is mapped or pushed."
+            )
+        zoho_failure_reasons.append(f"missing_mirror ({len(zoho_submissions)})")
+        zoho_results = []  # explicit no-call
+        for sub in zoho_submissions:
+            prev = results[sub.box_receipt_id]
+            results[sub.box_receipt_id] = LeafPushResult(
+                box_receipt_id=prev.box_receipt_id,
+                item_name=prev.item_name,
+                luma_status=prev.luma_status,
+                luma_error=prev.luma_error,
+                zoho_status=_ZOHO_STATUS_MISSING_MIRROR,
+                zoho_error=reason,
+            )
+    else:
         zoho_results = submit_zoho_receives(
             mirror, zoho_submissions,
             operator=user,
             session_id=(receive.submission_id or "")[:64],
             notes=receive.notes,
         )
-    else:
-        zoho_results = []
-
-    for zr in zoho_results:
-        prev = results.get(zr.submission.box_receipt_id)
-        if prev is None:
-            continue
-        results[zr.submission.box_receipt_id] = LeafPushResult(
-            box_receipt_id=prev.box_receipt_id,
-            item_name=prev.item_name,
-            luma_status=prev.luma_status,
-            luma_error=prev.luma_error,
-            zoho_status=zr.status,
-            zoho_error=zr.message if not zr.ok and zr.status not in _ZOHO_OK_STATUSES else None,
-        )
+        for zr in zoho_results:
+            prev = results.get(zr.submission.box_receipt_id)
+            if prev is None:
+                continue
+            results[zr.submission.box_receipt_id] = LeafPushResult(
+                box_receipt_id=prev.box_receipt_id,
+                item_name=prev.item_name,
+                luma_status=prev.luma_status,
+                luma_error=prev.luma_error,
+                zoho_status=zr.status,
+                zoho_error=zr.message if zr.status not in _ZOHO_OK_STATUSES else None,
+            )
 
     # ── Overall receive status ─────────────────────────────────────────
     all_box_ids = {b.id for b in box_receipts}
@@ -597,9 +698,18 @@ def push_receive_to_integrations(
         s in (LumaPushStatus.PUSHED, LumaPushStatus.DUPLICATE, LumaPushStatus.DRY_RUN_OK)
         for s in final_states
     )
-    zoho_ok = all(
-        (r.status in _ZOHO_OK_STATUSES) for r in zoho_results
-    )
+    # Tally Zoho failures from BOTH the real per-line results and the
+    # synthesized missing_mirror results — and bucket the reasons so the
+    # POEvent message is operator-readable without diving into the row.
+    zoho_status_counts: dict[str, int] = {}
+    for r in results.values():
+        if r.zoho_status:
+            zoho_status_counts[r.zoho_status] = zoho_status_counts.get(r.zoho_status, 0) + 1
+    bad_zoho_buckets = {
+        s: n for s, n in zoho_status_counts.items() if s not in _ZOHO_OK_STATUSES
+    }
+    zoho_ok = not bad_zoho_buckets
+
     if luma_ok and zoho_ok:
         receive.status = ReceiveStatus.PUSHED_OK
         receive.pushed_at = now
@@ -612,10 +722,12 @@ def push_receive_to_integrations(
             1 for s in final_states
             if s not in (LumaPushStatus.PUSHED, LumaPushStatus.DUPLICATE, LumaPushStatus.DRY_RUN_OK)
         )
-        bad_zoho = sum(1 for r in zoho_results if r.status not in _ZOHO_OK_STATUSES)
+        bad_zoho_str = ", ".join(
+            f"{s}={n}" for s, n in sorted(bad_zoho_buckets.items())
+        ) or "0"
         msg = (
             f"Receive {receive.receive_number} push had failures — "
-            f"luma_failed={bad_luma}, zoho_failed={bad_zoho}."
+            f"luma_failed={bad_luma}, zoho_failed=[{bad_zoho_str}]."
         )
     receive.updated_at = now
     if receive.purchase_order_id is not None:
