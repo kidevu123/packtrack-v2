@@ -143,10 +143,11 @@ def test_inbound_sync_preserves_pending_owner_edit(session: Session):
     }
     zoho._apply_item_sync_fields(it, raw)
 
-    # Zoho-owned owner edits are preserved...
+    # Pushable owner edits (name/description/unit) are preserved while pending...
     assert it.name == "FIX Local Name"
-    assert it.vendor == "Owner Vendor"
-    # ...but stock (not owner-editable) still tracks Zoho.
+    # ...but vendor is Zoho-read-only in PackTrack, so it always tracks Zoho...
+    assert it.vendor == "Zoho Vendor"
+    # ...and stock (not owner-editable) still tracks Zoho.
     assert it.current_stock == 99.0
     # product_line stays in step with the preserved local name.
     assert it.product_line == "FIX Local"

@@ -1,5 +1,35 @@
 # Current Phase Status
 
+## v2.5.1 — Real Zoho item-update path via integration service (patch release)
+
+| | |
+|---|---|
+| **Active version on main** | `2.5.1` |
+| **Alembic head** | `d5e6f7a8b9c0` (unchanged — no schema change) |
+
+**v2.5.1 scope:** Completes the parked v2.5.0 outbound item-sync path. Editing a
+Zoho-owned field on the item detail page now performs a **real PATCH** through
+the `zoho-integration-service` PackTrack item endpoints (CT 9503, v1.30.0+):
+`GET/PATCH /zoho/pack_track/items/{item_id}` and `GET .../items/list`. PackTrack
+still **never calls Zoho directly**.
+* **Writable allowlist** — only `name`, `description`, `unit` are ever sent.
+  Auth via `X-Internal-Token` + `X-Brand`. `services/zoho_item_sync.py` owns the
+  HTTP and never imports OAuth/`zohoapis`/direct-Zoho code.
+* **Vendor is Zoho-read-only** — the service rejects vendor writes
+  (`422 VENDOR_UPDATE_NOT_SUPPORTED`), so vendor is never sent. The detail page
+  renders vendor read-only for Zoho-synced items ("Vendor comes from Zoho and is
+  not editable here yet."); it stays locally editable only for manual items with
+  no `zoho_item_id`. Inbound sync always reflects Zoho's vendor.
+* **State machine** — PATCH success → `synced` (clears error, optional
+  read-after-write align of name/desc/unit); 4xx/5xx or network error →
+  `failed` with a truncated error and the local edit kept; service unconfigured
+  or item has no `zoho_item_id` → `pending` (local-only, protected from inbound
+  clobber). No outbound loop.
+* **Retry** — owner-only `POST /inventory/{id}/sync/retry` re-runs the push and
+  redirects with `saved=synced|failed|local`. No outbox dashboard yet.
+* **No schema change** — reuses the v2.5.0 `zoho_push_*` columns; Alembic head
+  unchanged.
+
 ## v2.5.0 — Inventory grouping + clickable item detail/edit (feature release)
 
 | | |
