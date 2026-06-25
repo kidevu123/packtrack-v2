@@ -37,6 +37,39 @@ still **never calls Zoho directly**.
 * **No schema change** — reuses the v2.5.0 `zoho_push_*` columns; Alembic head
   unchanged.
 
+## v2.5.0 — Receiving vNext Stage 1 (deployed + tagged)
+
+| | |
+|---|---|
+| **Active version on main** | `2.5.0` |
+| **Last deployed version** | `2.5.0` (production at commit `c97ad6e`, tagged `v2.5.0`) |
+| **Merged via** | PR [#1](https://github.com/kidevu123/packtrack-v2/pull/1) (squash) at 2026-06-25, base `3a2a7fa` → `c97ad6e` |
+| **Alembic head** | `e1f2a3b4c5d7` (`receive_vnext_stage1`, down_revision `d5e6f7a8b9c0`) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — default **OFF** in production. New `/receive/v2/...` routes return 404 to authenticated operators; unauthenticated probes 401 (auth gate fires first). Legacy `/receive/{zoho_po_id}` remains the only enabled receive flow until ops flips the flag. |
+| **Status** | Merged, deployed, tagged. Operator-visible behavior unchanged — vNext routes are reachable only by flipping the env var. |
+
+**v2.5.0 Stage 1 scope** (per `docs/design/2026-06-25-receiving-vnext.md` § 6 Stage 1):
+* **Schema** (additive only, no backfill, no destructive change):
+  * New tables `receives`, `receive_cases`, `receive_case_lines`.
+  * New nullable FK columns on `box_receipts`: `receive_id`, `receive_case_line_id` — **DB-only** in Stage 1, no ORM attributes added yet. Stage 2 will declare them on the `BoxReceipt` model when finalize materializes leaves.
+  * Partial UNIQUE `uq_receive_cases_receive_case_number` on `(receive_id, vendor_case_number) WHERE vendor_case_number IS NOT NULL` — duplicate vendor case numbers rejected within one receive; NULL placeholders during drafting coexist.
+  * UNIQUE on `receives.receive_number` and `receives.submission_id`.
+  * `AttachmentKind.PACKING_LIST` added to the enum; `Receive.packing_list_attachment_id` FK pointer (single primary attachment per receive in v1).
+* **SQLModel models** `Receive`, `ReceiveCase`, `ReceiveCaseLine` + enums `ReceiveStatus`, `ShipmentKind`, `CaseKind` (terminal states `finalized / pushed_ok / push_failed` defined but not used in Stage 1 — schema is forward-compatible).
+* **Routes under `/receive/v2/...`** behind the flag: create (`R-YYYY-NNNN` server-generated id), view, case CRUD, line CRUD, PO-scoped item search, totals. Permissions: OWNER + RECEIVING.
+* **Draft/counting UI** (HTMX + Alpine + Tailwind, matching existing macros): case blocks, line rows, totals-by-item right rail, packing-list placeholder, disabled "Finalize coming in v2.6.0" button.
+* **Validation**: empty cases allowed in draft; line requires item present on the PO + `declared_quantity > 0`; duplicate vendor case # → clean 409 (not 500) from either Postgres or SQLite.
+* **No** finalize / no BoxReceipt materialization / no Zoho push / no Luma push — all deferred to Stage 2 (v2.6.0). v2.4.1 Luma idempotency contract preserved verbatim for that future stage (`Receive.submission_id` generated at create time so it's ready).
+
+**Tests:** 21 cases in `tests/test_receive_vnext_stage1.py`; full suite **165 passed** on `main` after merge. `ruff check .` clean.
+
+**v2.5.0 ship-state (2026-06-25):**
+* Deploy via canonical `deploy/deploy.sh` to LXC 200 on Proxmox `192.168.1.190`. Post-restart smoke (8/8) passed. CSS build 50684 bytes. Migration `e1f2a3b4c5d7` applied cleanly (`d5e6f7a8b9c0 -> e1f2a3b4c5d7`).
+* `/healthz` returns `{"ok":true,"version":"2.5.0","db":"ok",...}`. Alembic current/head matches: `e1f2a3b4c5d7`.
+* `RECEIVING_VNEXT_ENABLED` unset in `/etc/packtrack/packtrack.env` and not in the uvicorn process environment — flag uses Python default `False`. Operator-visible receiving flow is the legacy `/receive/{zoho_po_id}`, unchanged.
+* `feature/receiving-vnext-v2.5.0-stage1` branch retained on origin for reference (Stage 2 will branch fresh from `main`).
+* **Next:** Stage 2 (v2.6.0) — finalize + BoxReceipt materialization + Zoho/Luma push wiring. Branch `feature/receiving-vnext-stage2-finalize` created from `c97ad6e`; plan reported separately. v2.4.1 Luma idempotency contract preserved verbatim for that work (`Receive.submission_id` already generated at create time).
+
 ## v2.5.0 — Inventory grouping + clickable item detail/edit (feature release)
 
 | | |

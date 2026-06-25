@@ -1,0 +1,9 @@
+{# Datalist options for the line item-search input — HTMX populates this
+   element directly (hx-target=next datalist). Operators type-and-pick;
+   the visible value is the item_id so the form's hidden item_id input
+   gets a real number when submitted. #}
+{% for it in items %}
+  <option value="{{ it.id }}" label="{{ it.name }}{% if it.material_code %} · {{ it.material_code }}{% endif %}">
+    {{ it.name }}{% if it.material_code %} · {{ it.material_code }}{% endif %}
+  </option>
+{% endfor %}

@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     SYNC_INTERVAL_MINUTES: int = 30
     PUSH_RETRY_INTERVAL_MINUTES: int = 5
 
+    # Stage-1 of Receiving vNext (case-first model) — see
+    # docs/design/2026-06-25-receiving-vnext.md. Default OFF: the new
+    # /receive/v2/... routes return 404 unless this is set true. Legacy
+    # /receive/{zoho_po_id} remains the only enabled receive flow.
+    RECEIVING_VNEXT_ENABLED: bool = False
+
     @property
     def oidc_configured(self) -> bool:
         return bool(self.OIDC_CLIENT_ID and self.OIDC_CLIENT_SECRET and self.OIDC_ISSUER_URL and self.OIDC_REDIRECT_URI)

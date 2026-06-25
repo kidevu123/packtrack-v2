@@ -33,6 +33,7 @@ from packtrack.routes import (
     inventory,
     purchase_orders,
     receiving,
+    receiving_v2,
     search,
     telegram_webhook,
     webhooks,
@@ -162,6 +163,11 @@ app.include_router(inbox.router)
 app.include_router(purchase_orders.router)
 app.include_router(inventory.router)
 app.include_router(receiving.router)
+# Receiving vNext (v2.5.0 Stage 1) — every route guarded by
+# settings.RECEIVING_VNEXT_ENABLED at the dependency layer, so when the
+# flag is off the routes return 404 and don't appear functional. Always
+# mounted so the URL surface exists for tests + canary toggling.
+app.include_router(receiving_v2.router)
 app.include_router(admin.router)
 app.include_router(search.router)
 app.include_router(telegram_webhook.router)
