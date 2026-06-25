@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Receive {{ receive.receive_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-[1400px]{% endblock %}
+{% block content %}
+<style>[x-cloak] { display: none !important; }</style>
+
+{{ ui.page_header(
+     title="Receive " ~ receive.receive_number,
+     subtitle=("PO " ~ po.po_number ~ " · " ~ (po.zoho_po_id or "")) if po else "",
+     secondary=[{"label":"← Back to receiving","href":"/receive"}],
+) }}
+
+{# ── Status / header strip ───────────────────────────────────────────── #}
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+  {{ ui.summary_card(label="Status", value=receive.status.value|title, tone="info") }}
+  {{ ui.summary_card(label="Delivery date", value=receive.delivery_date.isoformat(), tone="neutral") }}
+  {{ ui.summary_card(
+       label="Shipment",
+       value=receive.shipment_kind.value|title,
+       tone="neutral",
+       sub=(receive.tracking_number or "no tracking yet"),
+  ) }}
+  {{ ui.summary_card(label="Cases", value=cases|length, tone="neutral") }}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+  {# ── Left: cases ─────────────────────────────────────────────────── #}
+  <div class="lg:col-span-2">
+
+    <div id="receive-cases" class="space-y-3">
+      {% for case in cases %}
+        {% include "receive_v2/_case_block.html" with context %}
+      {% endfor %}
+    </div>
+
+    {# Add case form #}
+    <form hx-post="/receive/v2/{{ receive.id }}/cases"
+          hx-target="#receive-cases"
+          hx-swap="beforeend"
+          hx-on::after-request="this.reset(); htmx.ajax('GET', '/receive/v2/{{ receive.id }}/totals', '#receive-totals')"
+          class="mt-3 bg-white border border-stone-200 border-dashed rounded-2xl p-3 flex items-center gap-2 shadow-sm">
+      <input name="vendor_case_number" placeholder="Vendor case # (e.g. C-001 or 1)"
+             class="flex-1 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+      <select name="case_kind" class="rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+        <option value="">Case kind…</option>
+        <option value="master_case">Master case</option>
+        <option value="display_case">Display case</option>
+        <option value="pallet">Pallet</option>
+        <option value="loose">Loose</option>
+        <option value="other">Other</option>
+      </select>
+      <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">+ Add case</button>
+    </form>
+
+    <p class="mt-6 text-[11px] text-stone-400">
+      Finalize / push will arrive in v2.6.0 — Stage 1 supports draft + counting only.
+    </p>
+  </div>
+
+  {# ── Right rail ─────────────────────────────────────────────────── #}
+  <aside class="lg:col-span-1 space-y-4">
+
+    {# Packing list #}
+    <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Packing list</h2>
+      {% if packing_list %}
+        <p class="text-sm text-stone-700 truncate" title="{{ packing_list.filename }}">📎 {{ packing_list.filename }}</p>
+      {% else %}
+        <p class="text-sm text-stone-500">No packing list attached yet.</p>
+        <p class="text-[11px] text-stone-400 mt-2">Vendor upload UI lands in a follow-up stage.</p>
+      {% endif %}
+    </div>
+
+    {# Totals by item #}
+    <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Totals by item</h2>
+      <div id="receive-totals">
+        {% include "receive_v2/_totals.html" with context %}
+      </div>
+    </div>
+
+    {# Finalize placeholder #}
+    <div class="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-center">
+      <button disabled
+              class="w-full rounded-lg bg-stone-300 text-stone-500 text-sm font-medium px-4 py-2 cursor-not-allowed">
+        Finalize &amp; push (v2.6.0)
+      </button>
+      <p class="mt-2 text-[11px] text-stone-400">
+        Stage 1 saves drafts only. Zoho + Luma push is wired in v2.6.0.
+      </p>
+    </div>
+  </aside>
+</div>
+{% endblock %}

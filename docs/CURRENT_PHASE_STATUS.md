@@ -1,5 +1,33 @@
 # Current Phase Status
 
+## v2.5.0 — Receiving vNext Stage 1 (feature branch `feature/receiving-vnext-v2.5.0-stage1`, NOT deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-vnext-v2.5.0-stage1` (off `main` @ `eaa6439`) |
+| **Alembic head** | `e1f2a3b4c5d7` (`receive_vnext_stage1`, down_revision `d5e6f7a8b9c0`) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — default **OFF**. New `/receive/v2/...` routes return 404 unless set true; legacy `/receive/{zoho_po_id}` is unchanged and remains the only enabled receive flow. |
+| **Status** | Code complete on feature branch; not merged, not deployed, not tagged. |
+
+**v2.5.0 Stage 1 scope** (per `docs/design/2026-06-25-receiving-vnext.md` § 6 Stage 1):
+* **Schema** (additive only, no backfill, no destructive change):
+  * New tables `receives`, `receive_cases`, `receive_case_lines`.
+  * New nullable FK columns on `box_receipts`: `receive_id`, `receive_case_line_id` — **DB-only** in Stage 1, no ORM attributes added yet. Stage 2 will declare them on the `BoxReceipt` model when finalize materializes leaves.
+  * Partial UNIQUE `uq_receive_cases_receive_case_number` on `(receive_id, vendor_case_number) WHERE vendor_case_number IS NOT NULL` — duplicate vendor case numbers rejected within one receive; NULL placeholders during drafting coexist.
+  * UNIQUE on `receives.receive_number` and `receives.submission_id`.
+  * `AttachmentKind.PACKING_LIST` added to the enum; `Receive.packing_list_attachment_id` FK pointer (single primary attachment per receive in v1).
+* **SQLModel models** `Receive`, `ReceiveCase`, `ReceiveCaseLine` + enums `ReceiveStatus`, `ShipmentKind`, `CaseKind` (terminal states `finalized / pushed_ok / push_failed` defined but not used in Stage 1 — schema is forward-compatible).
+* **Routes under `/receive/v2/...`** behind the flag: create (`R-YYYY-NNNN` server-generated id), view, case CRUD, line CRUD, PO-scoped item search, totals. Permissions: OWNER + RECEIVING.
+* **Draft/counting UI** (HTMX + Alpine + Tailwind, matching existing macros): case blocks, line rows, totals-by-item right rail, packing-list placeholder, disabled "Finalize coming in v2.6.0" button.
+* **Validation**: empty cases allowed in draft; line requires item present on the PO + `declared_quantity > 0`; duplicate vendor case # → clean 409 (not 500) from either Postgres or SQLite.
+* **No** finalize / no BoxReceipt materialization / no Zoho push / no Luma push — all deferred to Stage 2 (v2.6.0). v2.4.1 Luma idempotency contract preserved verbatim for that future stage (`Receive.submission_id` generated at create time so it's ready).
+
+**Tests:** 16 new cases in `tests/test_receive_vnext_stage1.py`; full suite 160 passed (was 144). `ruff check .` clean.
+
+**Notes:**
+* Branch was opened because `main` had unstaged WIP at the time (user's parallel inventory-grouping work for v2.5.0). The Stage 1 schema chains off `d5e6f7a8b9c0`, so the two v2.5.0 lines (Receiving vNext + Inventory grouping) will both apply when merged. Alembic has a single head on each branch independently.
+* No `box_receipts` Python model attributes were added for the two new FK columns — by design. The DB columns sit unused; the legacy `/receive/{zoho_po_id}` flow's `BoxReceipt` queries continue to ignore them. Stage 2 wiring will add the attributes and the materialization path together.
+
 ## v2.5.0 — Inventory grouping + clickable item detail/edit (feature release)
 
 | | |
