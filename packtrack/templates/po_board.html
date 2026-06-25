@@ -16,7 +16,7 @@
   }
   .po-card.sortable-ghost { opacity: 0.30; }
   .po-card.sortable-chosen { box-shadow: 0 8px 22px -8px rgba(28,25,23,0.20); }
-  .po-column.drag-over { background-color: rgb(231 229 228 / 0.7); }
+  .po-column.drag-over { background-color: rgb(245 245 244 / 0.9); outline: 2px dashed rgb(214 211 209); outline-offset: -2px; border-radius: 0.5rem; }
   /* Mobile: stack columns vertically. Desktop: horizontal scroll, equal widths. */
 </style>
 {% endblock %}
@@ -34,12 +34,12 @@
 } %}
 
 {% set tone_classes = {
-  'stone':   {'header': 'text-stone-700',   'bg': 'bg-stone-100',    'count': 'bg-stone-200 text-stone-700'},
-  'amber':   {'header': 'text-amber-800',   'bg': 'bg-amber-50',     'count': 'bg-amber-100 text-amber-800'},
-  'blue':    {'header': 'text-blue-800',    'bg': 'bg-blue-50',      'count': 'bg-blue-100 text-blue-800'},
-  'indigo':  {'header': 'text-indigo-800',  'bg': 'bg-indigo-50',    'count': 'bg-indigo-100 text-indigo-800'},
-  'cyan':    {'header': 'text-cyan-800',    'bg': 'bg-cyan-50',      'count': 'bg-cyan-100 text-cyan-800'},
-  'emerald': {'header': 'text-emerald-800', 'bg': 'bg-emerald-50',   'count': 'bg-emerald-100 text-emerald-800'},
+  'stone':   {'header': 'text-stone-700',   'border': 'border-t-stone-400',   'icon': 'bg-stone-100 text-stone-600',     'count': 'bg-stone-100 text-stone-700 border border-stone-200'},
+  'amber':   {'header': 'text-amber-800',   'border': 'border-t-amber-500',   'icon': 'bg-amber-50 text-amber-700',      'count': 'bg-amber-50 text-amber-800 border border-amber-100'},
+  'blue':    {'header': 'text-blue-800',    'border': 'border-t-blue-500',    'icon': 'bg-blue-50 text-blue-700',        'count': 'bg-blue-50 text-blue-800 border border-blue-100'},
+  'indigo':  {'header': 'text-indigo-800',  'border': 'border-t-indigo-500',  'icon': 'bg-indigo-50 text-indigo-700',    'count': 'bg-indigo-50 text-indigo-800 border border-indigo-100'},
+  'cyan':    {'header': 'text-cyan-800',    'border': 'border-t-cyan-500',    'icon': 'bg-cyan-50 text-cyan-700',        'count': 'bg-cyan-50 text-cyan-800 border border-cyan-100'},
+  'emerald': {'header': 'text-emerald-800', 'border': 'border-t-emerald-500', 'icon': 'bg-emerald-50 text-emerald-700',  'count': 'bg-emerald-50 text-emerald-800 border border-emerald-100'},
 } %}
 
 {% set any_filter = filter_stale or filter_urgency or filter_mine %}
@@ -108,17 +108,19 @@
     {% set meta = stage_meta[col.key] %}
     {% set tone = tone_classes[meta.tone] %}
     <section id="col-{{ col.key }}"
-             class="flex-1 lg:basis-0 lg:min-w-[260px] {{ tone.bg }} rounded-xl p-3 flex flex-col">
-      <header class="flex items-center justify-between mb-3 px-1">
+             class="relative flex-1 lg:basis-0 lg:min-w-[260px] bg-white border border-stone-200 {{ tone.border }} border-t-[3px] rounded-xl shadow-sm p-3 flex flex-col">
+      <header class="flex items-center justify-between mb-3 px-0.5">
         <div class="flex items-center gap-2 min-w-0">
           <span class="text-[10px] font-mono text-stone-400 shrink-0">{{ '%02d'|format(meta.n) }}</span>
-          <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 {{ tone.header }} shrink-0"><path fill-rule="evenodd" d="{{ meta.path }}" clip-rule="evenodd" /></svg>
+          <span class="inline-flex items-center justify-center size-6 rounded-md {{ tone.icon }} shrink-0">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="size-3.5"><path fill-rule="evenodd" d="{{ meta.path }}" clip-rule="evenodd" /></svg>
+          </span>
           <span class="text-xs font-semibold uppercase tracking-wider {{ tone.header }} truncate">{{ col.label }}</span>
         </div>
         <span class="inline-flex items-center justify-center min-w-[1.5rem] h-5 px-1.5 text-[11px] font-medium rounded-full {{ tone.count }}">{{ col.count }}</span>
       </header>
 
-      <ul data-column="{{ col.key }}" class="po-column space-y-2 min-h-[60px]">
+      <ul data-column="{{ col.key }}" class="po-column space-y-2 min-h-[80px] flex-1">
         {% set visible_cards = col.cards[:15] if col.key == 'received' else col.cards %}
         {% for c in visible_cards %}
           {% set urgency_dot = {
@@ -186,6 +188,16 @@
           <li class="text-center text-xs text-stone-400 py-1">+ {{ col.count - 15 }} more — see Closed section below</li>
         {% endif %}
       </ul>
+      {% if col.count == 0 %}
+        <div class="pointer-events-none absolute inset-x-3 top-12 bottom-3 flex flex-col items-center justify-center rounded-lg border border-dashed border-stone-200 bg-stone-50/60 text-center px-3">
+          <p class="text-[11px] text-stone-400">No POs in this stage</p>
+          {% if col.key == 'draft' %}
+            <p class="text-[10px] text-stone-300 mt-0.5">Create one below or drag here</p>
+          {% else %}
+            <p class="text-[10px] text-stone-300 mt-0.5">Drag a card here to move it</p>
+          {% endif %}
+        </div>
+      {% endif %}
 
       {# In-column "Add a PO" affordance — owner-only, only meaningful in the
          Draft column where new POs naturally start. #}

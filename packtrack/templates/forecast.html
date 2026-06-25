@@ -186,7 +186,7 @@
   {# ── No data — collapsed by default to drop visual weight ───────── #}
   {% if no_data_rows %}
   <section id="no-data" class="mb-7 scroll-mt-20" x-data="{ open: false }">
-    <button @click="open = !open"
+    <button type="button" @click="open = !open"
             class="flex items-center gap-2.5 mb-3 text-left w-full hover:text-stone-900 transition-colors text-stone-500">
       <span class="size-2.5 rounded-full bg-stone-400"></span>
       <h2 class="font-semibold">No demand data ({{ no_data_rows|length }})</h2>

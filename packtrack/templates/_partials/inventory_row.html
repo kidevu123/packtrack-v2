@@ -27,25 +27,33 @@
    else "text-amber-700 font-medium" if stock_tone == "warn"
    else "text-stone-900" %}
 
-<li id="item-{{ it.id }}" x-data="{ editing: false }" class="px-5 py-3 hover:bg-stone-50 transition-colors">
-  <div class="grid grid-cols-12 gap-4 items-center">
+<li id="item-{{ it.id }}" x-data="{ editing: false }" class="px-5 py-2.5 hover:bg-stone-50 transition-colors">
+  <div class="grid grid-cols-12 gap-3 md:gap-4 items-center">
 
     {# Item col: thumb + name + secondary metadata line #}
-    <div class="col-span-12 md:col-span-6 flex items-center gap-3 min-w-0">
+    <div class="col-span-12 md:col-span-6 flex items-center gap-2.5 min-w-0">
       {% if it.image_path %}
-        <img src="/uploads/items/{{ it.image_path }}" alt="" loading="lazy" decoding="async" class="size-11 rounded-md object-cover bg-stone-100 shrink-0" />
+        <img src="/uploads/items/{{ it.image_path }}" alt="" loading="lazy" decoding="async" class="size-10 rounded-md object-cover bg-stone-100 shrink-0" />
       {% else %}
-        <span class="size-11 rounded-md bg-stone-100 grid place-items-center text-xs font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
+        <span class="size-10 rounded-md bg-stone-100 grid place-items-center text-[11px] font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
       {% endif %}
       <div class="min-w-0 flex-1">
-        <p class="font-medium text-sm text-stone-900 truncate">
+        <p class="font-medium text-sm text-stone-900 truncate leading-snug">
           {{ it.name | replace('[Packaging]', '') | replace('[packaging]', '') | trim }}
         </p>
-        <p class="text-xs text-stone-500 truncate mt-0.5">
-          {% if it.sku_code %}<span class="font-mono">{{ it.sku_code }}</span>{% endif %}
-          {% if it.vendor %}<span class="text-stone-300">·</span> {{ it.vendor }}{% endif %}
-          {% if it.material_code %}<span class="text-stone-300">·</span> <span class="font-mono">{{ it.material_code }}</span>{% endif %}
-          {% if it.last_unit_cost %}<span class="text-stone-300">·</span> last paid {{ it.last_unit_cost|money('USD') }}{% endif %}
+        {% if it.sku_code %}
+          <p class="text-xs font-mono text-stone-500 truncate mt-0.5">{{ it.sku_code }}</p>
+        {% endif %}
+        <p class="text-[11px] text-stone-400 truncate {% if it.sku_code %}mt-0.5{% else %}mt-0.5{% endif %}">
+          {% if it.vendor %}<span>{{ it.vendor }}</span>{% endif %}
+          {% if it.material_code %}
+            {% if it.vendor %}<span class="text-stone-300 mx-1">·</span>{% endif %}
+            <span class="font-mono text-stone-500">{{ it.material_code }}</span>
+          {% endif %}
+          {% if it.last_unit_cost %}
+            {% if it.vendor or it.material_code %}<span class="text-stone-300 mx-1">·</span>{% endif %}
+            <span>last paid {{ it.last_unit_cost|money('USD') }}</span>
+          {% endif %}
         </p>
       </div>
     </div>
@@ -54,7 +62,7 @@
     <div class="col-span-7 md:col-span-3 flex flex-wrap items-center gap-1.5 text-[11px]">
       {{ ui.status_badge(stock_label, tone=stock_tone) }}
       {% if not it.material_code %}
-        {{ ui.status_badge("No material code", tone="warn") }}
+        {{ ui.status_badge("No code", tone="muted") }}
       {% endif %}
       {% if cov and cov.is_covered %}
         <span class="text-emerald-700 text-[11px]">Covered ({{ (cov.packtrack_open_qty + cov.zoho_open_qty)|qty }} open)</span>
@@ -67,15 +75,18 @@
     </div>
 
     {# On hand col: big right-aligned number, dim Nd-left underneath #}
-    <div class="col-span-3 md:col-span-2 text-right">
-      <p class="{{ qty_color }} text-sm tabular-nums">{{ it.current_stock|qty }} <span class="text-stone-400 font-normal">{{ it.unit }}</span></p>
-      {% if days %}<p class="text-[11px] text-stone-400 tabular-nums">{{ days|round(0)|int }}d left</p>{% endif %}
+    <div class="col-span-3 md:col-span-2 text-right tabular-nums">
+      <p class="{{ qty_color }} text-base leading-tight">
+        <span class="inline-block min-w-[3.5rem] text-right">{{ it.current_stock|qty }}</span>
+        <span class="text-stone-400 font-normal text-sm">{{ it.unit }}</span>
+      </p>
+      {% if days %}<p class="text-[11px] text-stone-400 mt-0.5">{{ days|round(0)|int }}d left</p>{% endif %}
     </div>
 
     {# Edit col: ghost button so it doesn't compete with primary actions. #}
     <div class="col-span-2 md:col-span-1 text-right">
       {% if user.role.value == 'owner' %}
-        <button @click="editing = !editing" class="text-xs text-stone-400 hover:text-stone-900 px-2 py-1 rounded transition-colors">
+        <button type="button" @click="editing = !editing" class="text-xs text-stone-400 hover:text-stone-900 px-2 py-1 rounded transition-colors">
           <span x-show="!editing">Edit</span>
           <span x-show="editing" x-cloak>Close</span>
         </button>
