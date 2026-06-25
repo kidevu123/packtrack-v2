@@ -45,6 +45,7 @@ from packtrack.services.receiving_v2 import (
     items_for_po,
     make_submission_id,
     next_case_sequence,
+    po_item_choices,
     receive_cases,
     totals_by_item,
 )
@@ -138,17 +139,47 @@ def _bump_updated(rec: Receive) -> None:
 
 
 @router.get("/new", response_class=HTMLResponse)
-def new_receive(
+def new_receive_form(
     request: Request,
     po_id: int,
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
     _flag: None = Depends(_require_vnext_flag),
 ):
-    """Create a new draft Receive from a PO and redirect to its page.
+    """Confirmation page for starting a new receive.
 
-    v1 requires ``po_id``. The schema is multi-PO-ready (Receive.purchase_order_id
-    is nullable) but the UI does not expose that until a later stage.
+    GET must NOT mutate state — refreshes, crawlers, and prefetching
+    would otherwise litter the table with empty drafts. The page just
+    shows the PO context and a POST button; ``POST /receive/v2/new``
+    is what actually creates the Receive.
+
+    v1 requires ``po_id``. The schema is multi-PO-ready
+    (``Receive.purchase_order_id`` is nullable) but the UI does not
+    expose that until a later stage.
+    """
+    _require_receiving_or_owner(user)
+    po = session.get(PurchaseOrder, po_id)
+    if po is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PO not found")
+    return _render(
+        request,
+        "receive_v2/new.html",
+        {"user": user, "po": po, "choices": po_item_choices(session, po_id)},
+    )
+
+
+@router.post("/new", response_class=HTMLResponse)
+def create_receive(
+    request: Request,
+    po_id: int = Form(...),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Actually create the draft Receive. 303 to the receive page.
+
+    POST so refreshes/prefetching cannot accidentally create rows. PO
+    is taken from the form body, not the query string.
     """
     _require_receiving_or_owner(user)
     po = session.get(PurchaseOrder, po_id)
@@ -203,6 +234,7 @@ def view_receive(
         if rec.packing_list_attachment_id
         else None
     )
+    choices = po_item_choices(session, rec.purchase_order_id) if rec.purchase_order_id else []
     return _render(
         request,
         "receive_v2/index.html",
@@ -215,6 +247,7 @@ def view_receive(
             "case_items": case_to_items,
             "totals": totals,
             "packing_list": packing_list,
+            "choices": choices,
         },
     )
 
@@ -261,6 +294,7 @@ def add_case(
             ) from None
         raise
     session.refresh(case)
+    choices = po_item_choices(session, rec.purchase_order_id) if rec.purchase_order_id else []
     return _render(
         request,
         "receive_v2/_case_block.html",
@@ -269,6 +303,7 @@ def add_case(
             "lines": [],
             "items": {},
             "receive": rec,
+            "choices": choices,
         },
     )
 
@@ -312,10 +347,11 @@ def edit_case(
         for it in (session.get(Item, line.item_id) for line in lines)
         if it is not None
     }
+    choices = po_item_choices(session, rec.purchase_order_id) if rec.purchase_order_id else []
     return _render(
         request,
         "receive_v2/_case_block.html",
-        {"case": case, "lines": lines, "items": items, "receive": rec},
+        {"case": case, "lines": lines, "items": items, "receive": rec, "choices": choices},
     )
 
 

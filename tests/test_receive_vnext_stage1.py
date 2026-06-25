@@ -166,6 +166,13 @@ def _client(session: Session, engine, monkeypatch: pytest.MonkeyPatch):
     return TestClient(app, raise_server_exceptions=False)
 
 
+def _create_receive(client, po_id: int) -> int:
+    """POST /receive/v2/new and return the new receive's id from the 303."""
+    r = client.post("/receive/v2/new", data={"po_id": str(po_id)}, follow_redirects=False)
+    assert r.status_code == 303, r.text
+    return int(r.headers["Location"].rsplit("/", 1)[-1])
+
+
 # ---------------------------------------------------------------------------
 # 1 + 2. Feature flag
 # ---------------------------------------------------------------------------
@@ -179,8 +186,12 @@ def test_vnext_routes_404_when_flag_off(
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
 
+    # Both verbs on /new must 404; if only GET were blocked, an attacker
+    # could still create rows via POST.
+    assert client.get(f"/receive/v2/new?po_id={po.id}").status_code == 404
+    assert client.post("/receive/v2/new", data={"po_id": str(po.id)}).status_code == 404
+
     for path in [
-        f"/receive/v2/new?po_id={po.id}",
         "/receive/v2/1",
         "/receive/v2/1/cases",
         "/receive/v2/1/totals",
@@ -191,16 +202,52 @@ def test_vnext_routes_404_when_flag_off(
         assert r.status_code == 404, f"{path} expected 404 with flag off, got {r.status_code}"
 
 
-def test_vnext_create_works_when_flag_on(
+def test_get_new_renders_form_does_not_create(
+    session: Session, engine, monkeypatch: pytest.MonkeyPatch,
+):
+    """GET must NOT mutate — refreshes/crawlers/prefetching would
+    otherwise create empty drafts."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _seed_user(session)
+    po, _ = _seed_po_with_items(session)
+    client = _client(session, engine, monkeypatch)
+
+    before = session.scalar(select(__import__("sqlmodel").func.count()).select_from(Receive))
+    r = client.get(f"/receive/v2/new?po_id={po.id}")
+    assert r.status_code == 200
+    # Page should expose the POST action so the operator can submit.
+    assert 'action="/receive/v2/new"' in r.text
+    assert 'method="post"' in r.text
+    assert "Start receive" in r.text
+    after = session.scalar(select(__import__("sqlmodel").func.count()).select_from(Receive))
+    assert after == before, "GET /receive/v2/new must not create a Receive"
+
+
+def test_repeated_get_new_does_not_create_duplicates(
     session: Session, engine, monkeypatch: pytest.MonkeyPatch,
 ):
     settings.RECEIVING_VNEXT_ENABLED = True
     _seed_user(session)
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    r = client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False)
+    for _ in range(5):
+        assert client.get(f"/receive/v2/new?po_id={po.id}").status_code == 200
+    n = session.scalar(select(__import__("sqlmodel").func.count()).select_from(Receive))
+    assert n == 0
+
+
+def test_post_new_creates_exactly_one_and_303s(
+    session: Session, engine, monkeypatch: pytest.MonkeyPatch,
+):
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _seed_user(session)
+    po, _ = _seed_po_with_items(session)
+    client = _client(session, engine, monkeypatch)
+    r = client.post("/receive/v2/new", data={"po_id": str(po.id)}, follow_redirects=False)
     assert r.status_code == 303, r.text
     assert r.headers["Location"].startswith("/receive/v2/")
+    n = session.scalar(select(__import__("sqlmodel").func.count()).select_from(Receive))
+    assert n == 1
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +262,7 @@ def test_create_receive_persists_with_r_yyyy_nnnn_number(
     _seed_user(session)
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False)
+    _create_receive(client, po.id)
     rec = session.exec(select(Receive)).first()
     assert rec is not None
     assert re.match(r"^R-\d{4}-\d{4}$", rec.receive_number), rec.receive_number
@@ -248,8 +295,7 @@ def test_add_case_with_free_text_vendor_number(
     _seed_user(session)
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    create = client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False)
-    rid = int(create.headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
 
     r = client.post(
         f"/receive/v2/{rid}/cases",
@@ -268,7 +314,7 @@ def test_duplicate_vendor_case_number_returns_409_not_500(
     _seed_user(session)
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     r1 = client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-001"})
     assert r1.status_code == 200
     r2 = client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-001"})
@@ -285,7 +331,7 @@ def test_null_vendor_case_numbers_can_coexist(
     _seed_user(session)
     po, _ = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     r1 = client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": ""})
     r2 = client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": ""})
     assert r1.status_code == 200
@@ -305,7 +351,7 @@ def test_add_multiple_lines_under_one_case(
     _seed_user(session)
     po, items = _seed_po_with_items(session, n_items=3)
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-1"})
     case_id = session.exec(select(ReceiveCase)).first().id
 
@@ -335,7 +381,7 @@ def test_line_requires_item_on_po(
     session.refresh(off_po)
 
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-1"})
     case_id = session.exec(select(ReceiveCase)).first().id
 
@@ -354,7 +400,7 @@ def test_line_requires_positive_qty(
     _seed_user(session)
     po, items = _seed_po_with_items(session)
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-1"})
     case_id = session.exec(select(ReceiveCase)).first().id
 
@@ -402,7 +448,7 @@ def test_items_search_route_scopes_to_po_lines(
     session.add(off_po)
     session.commit()
     client = _client(session, engine, monkeypatch)
-    rid = int(client.get(f"/receive/v2/new?po_id={po.id}", follow_redirects=False).headers["Location"].rsplit("/", 1)[-1])
+    rid = _create_receive(client, po.id)
     r = client.get(f"/receive/v2/{rid}/items-search?q=item")
     assert r.status_code == 200
     assert "Other Item Z" not in r.text
@@ -498,3 +544,82 @@ def test_alembic_chain_includes_stage1_revision():
     assert len(heads) == 1
     chain = {r.revision for r in sd.walk_revisions()}
     assert "e1f2a3b4c5d7" in chain
+
+
+# ---------------------------------------------------------------------------
+# Item-picker UX — operator picks from a <select>, not a raw-ID number input
+# ---------------------------------------------------------------------------
+
+
+def test_po_item_choices_returns_one_choice_per_po_line_with_useful_label(session: Session):
+    """Pure service helper: each PO line yields a (item_id, label) row."""
+    from packtrack.services.receiving_v2 import po_item_choices
+
+    _seed_user(session, Role.OWNER)
+    po, items = _seed_po_with_items(session, n_items=3)
+    choices = po_item_choices(session, po.id)
+    assert len(choices) == 3
+    ids = {c.item_id for c in choices}
+    assert ids == {it.id for it in items}
+    # Labels carry the item name and the material code so duplicates are
+    # distinguishable in the dropdown.
+    for c in choices:
+        assert any(c.label.startswith(it.name) for it in items)
+        assert " · " in c.label  # name · code · qty
+
+
+def test_receive_page_renders_select_with_po_items_no_raw_id_input(
+    session: Session, engine, monkeypatch: pytest.MonkeyPatch,
+):
+    """The case-line form must use a real <select name="item_id">, not
+    ask the operator to type a raw ID."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _seed_user(session)
+    po, items = _seed_po_with_items(session, n_items=2)
+    client = _client(session, engine, monkeypatch)
+    rid = _create_receive(client, po.id)
+    client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-1"})
+
+    r = client.get(f"/receive/v2/{rid}")
+    assert r.status_code == 200, r.text
+
+    # Must contain a real <select name="item_id">…
+    assert '<select name="item_id"' in r.text
+    # …with one option per PO item, identified by id (operator picks by label).
+    for it in items:
+        assert f'value="{it.id}"' in r.text
+        assert it.name in r.text
+    # Must NOT use a raw-ID number input as the primary picker UX.
+    assert 'name="item_id" type="number"' not in r.text
+    assert 'placeholder="Item ID"' not in r.text
+
+
+def test_add_line_via_select_uses_po_scope_and_rejects_off_po_items(
+    session: Session, engine, monkeypatch: pytest.MonkeyPatch,
+):
+    """Picking from the dropdown still relies on the same server-side
+    PO-scope guard."""
+    settings.RECEIVING_VNEXT_ENABLED = True
+    _seed_user(session)
+    po, items = _seed_po_with_items(session, n_items=2)
+    off_po = Item(name="Off-PO", unit="EACH", current_stock=0)
+    session.add(off_po)
+    session.commit()
+    session.refresh(off_po)
+    client = _client(session, engine, monkeypatch)
+    rid = _create_receive(client, po.id)
+    client.post(f"/receive/v2/{rid}/cases", data={"vendor_case_number": "C-1"})
+    case_id = session.exec(select(ReceiveCase)).first().id
+
+    # Submit through the select (just sets item_id like the dropdown would).
+    ok = client.post(
+        f"/receive/v2/{rid}/cases/{case_id}/lines",
+        data={"item_id": str(items[0].id), "declared_quantity": "10"},
+    )
+    assert ok.status_code == 200
+    bad = client.post(
+        f"/receive/v2/{rid}/cases/{case_id}/lines",
+        data={"item_id": str(off_po.id), "declared_quantity": "10"},
+    )
+    assert bad.status_code == 400
+    assert "not on this PO" in bad.text

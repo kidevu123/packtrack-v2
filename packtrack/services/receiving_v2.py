@@ -69,6 +69,48 @@ def make_submission_id() -> str:
 
 
 @dataclass
+class POItemChoice:
+    """One row in the per-line item dropdown.
+
+    Pre-rendered server-side from the PO's lines so the case-block
+    template drops the values straight into a ``<select>`` — no raw-ID
+    typing required of the operator.
+    """
+    item_id: int
+    label: str
+
+
+def po_item_choices(session: Session, po_id: int) -> list[POItemChoice]:
+    """Item choices for the case-line ``<select>``, scoped to the PO's lines.
+
+    One option per (item, po_line) pair, ordered by item name. The
+    label is ``Item name · MATERIAL_CODE · N remaining`` (or ``N
+    ordered`` when nothing is received yet), so operators can tell
+    similar items apart without typing.
+    """
+    rows = session.exec(
+        select(Item, POLine)
+        .join(POLine, POLine.item_id == Item.id)
+        .where(POLine.po_id == po_id)
+        .order_by(Item.name, POLine.id)
+    ).all()
+    out: list[POItemChoice] = []
+    for item, line in rows:
+        bits: list[str] = [item.name]
+        if item.material_code:
+            bits.append(item.material_code)
+        ordered = float(line.quantity or 0)
+        received = float(line.received_quantity or 0)
+        remaining = max(0.0, ordered - received)
+        if remaining > 0:
+            bits.append(f"{int(remaining)} remaining")
+        elif ordered > 0:
+            bits.append(f"{int(ordered)} ordered")
+        out.append(POItemChoice(item_id=item.id, label=" · ".join(bits)))
+    return out
+
+
+@dataclass
 class ItemTotalsRow:
     item_id: int
     item_name: str

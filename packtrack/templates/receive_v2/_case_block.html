@@ -37,33 +37,28 @@
     </tbody>
   </table>
 
-  {# Add line form #}
+  {# Add line form — operator picks an item from the PO-scoped <select>,
+     no raw-ID typing. ``choices`` is a list of POItemChoice (item_id, label)
+     built in services/receiving_v2.py::po_item_choices and passed in by
+     every route that renders this partial. #}
   <form hx-post="/receive/v2/{{ receive.id }}/cases/{{ case.id }}/lines"
         hx-target="#case-{{ case.id }}-lines"
         hx-swap="beforeend"
         hx-on::after-request="this.reset(); htmx.ajax('GET', '/receive/v2/{{ receive.id }}/totals', '#receive-totals')"
         class="grid grid-cols-12 gap-2 pt-2 border-t border-stone-100">
-    <label class="col-span-5 relative">
-      <input name="_item_search"
-             type="search"
-             placeholder="Search PO items…"
-             hx-get="/receive/v2/{{ receive.id }}/items-search"
-             hx-trigger="keyup changed delay:200ms"
-             hx-target="next datalist"
-             hx-include="this"
-             list="items-{{ case.id }}"
-             autocomplete="off"
-             class="w-full rounded-lg border-stone-300 text-sm" />
-      <datalist id="items-{{ case.id }}"></datalist>
-    </label>
-    {# Hidden item_id chosen via the items-search datalist (operator picks an
-       option whose value is the item_id). #}
-    <input name="item_id" type="number" placeholder="Item ID"
-           class="col-span-2 rounded-lg border-stone-300 text-sm" required />
+    <select name="item_id" required
+            class="col-span-6 rounded-lg border-stone-300 text-sm">
+      <option value="">Pick a PO item…</option>
+      {% for choice in choices %}
+        <option value="{{ choice.item_id }}">{{ choice.label }}</option>
+      {% endfor %}
+    </select>
     <input name="declared_quantity" type="number" step="0.01" min="0.01" placeholder="Declared"
            class="col-span-2 rounded-lg border-stone-300 text-sm text-right tabular-nums" required />
     <input name="counted_quantity" type="number" step="0.01" min="0" placeholder="Counted"
            class="col-span-2 rounded-lg border-stone-300 text-sm text-right tabular-nums" />
+    <input name="supplier_lot_number" placeholder="Lot"
+           class="col-span-1 rounded-lg border-stone-300 text-sm" />
     <button class="col-span-1 rounded-lg bg-stone-900 text-white text-xs font-medium px-2 py-1 hover:bg-stone-800">+</button>
   </form>
 </div>
