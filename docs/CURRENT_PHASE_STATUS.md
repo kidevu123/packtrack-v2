@@ -1,5 +1,46 @@
 # Current Phase Status
 
+## v2.6.1 — Richer inventory item detail (read-only Zoho metadata)
+
+| | |
+|---|---|
+| **Version** | `2.6.1` |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
+| **Scope** | Display / read-only only. No new Zoho writes. |
+
+> Released right after the Receiving vNext Stage 2 `2.6.0` line; this is the
+> inventory-side companion patch (separate work stream, no overlap).
+
+**v2.6.0 scope:** The inventory item detail page now shows a much richer,
+read-only view of the Zoho item, sourced through the `zoho-integration-service`
+v1.31.0 Phase A endpoints. PackTrack still **never calls Zoho directly**.
+
+* **New read-only client** — `services/zoho_item_detail.py` fetches
+  `GET /zoho/pack_track/items/{id}` (expanded detail) and
+  `GET /zoho/pack_track/items/metadata` (custom-field defs, dropdown options,
+  categories, reporting tags, field policy) using `Authorization: Bearer <app
+  token>` + `X-Brand`. Every failure degrades gracefully — the local detail
+  still renders with a small operator note ("Zoho extended details
+  unavailable.").
+* **Metadata cache** — simple in-process TTL cache honoring
+  `meta.cache_ttl_seconds` (3600s), with a stale/None fallback on fetch failure.
+* **New detail sections** — Primary details, Packaging & custom fields, Zoho
+  accounting & inventory, Images & attachments, plus the existing Sync status.
+  Custom fields are merged from metadata defs (full, ordered, labeled) with the
+  item's set values. Dropdowns (e.g. `cf_product_line` → 7OH / MIT A / MIT B)
+  render as **disabled `<select>`s** — visible but not writable in this phase.
+* **Naming kept distinct** — PackTrack's derived `product_line` (browsing group:
+  FIX / FIX Beyond / Unassigned) is shown separately and is **never** overwritten
+  by Zoho's `cf_product_line` custom field (labeled "Zoho Product Line"). The two
+  descriptions (standard Zoho item description vs `cf_description` custom field)
+  are also labeled distinctly.
+* **No new writes** — no custom-field / pricing / account / valuation / vendor /
+  reporting-tag / stock editing. The v2.5.1 editable path (name, description,
+  unit via item PATCH; vendor read-only; retry; pending/failed/synced) is
+  preserved unchanged. The outbound PATCH payload still only carries
+  `name`/`description`/`unit`.
+* **No schema change** — display-only; Alembic head unchanged.
+
 ## v2.6.0 — Receiving vNext Stage 2 (feature branch, NOT deployed)
 
 | | |
