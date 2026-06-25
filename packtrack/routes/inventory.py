@@ -23,6 +23,8 @@ from packtrack.services.product_line import (
 )
 from packtrack.services.scope import get_scope
 from packtrack.services.zoho_item_sync import (
+    PUSH_FAILED,
+    PUSH_SYNCED,
     ZOHO_OWNED_EDITABLE_FIELDS,
     push_item_update,
 )
@@ -178,8 +180,12 @@ def update_item(
 
     ``current_stock`` is intentionally NOT editable — stock comes from Zoho /
     receipts, and the repo has no manual inventory-adjustment pattern that we
-    could safely reuse from the UI. Editing a Zoho-owned field parks the item
-    as ``pending`` outbound sync (no Zoho item-write path exists yet).
+    could safely reuse from the UI.
+
+    Editing a Zoho-owned, pushable field (name/description/unit) pushes the
+    change to Zoho through the integration service. ``vendor`` is Zoho-read-only
+    for synced items (the service rejects vendor writes); it is only locally
+    editable for manual items that have no ``zoho_item_id``.
     """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -191,10 +197,9 @@ def update_item(
     new_values = {
         "name": new_name or item.name,  # never blank out the name
         "description": (description or "").strip() or None,
-        "vendor": _clean(vendor, _MAX_VENDOR) or None,
         "unit": _clean(unit, _MAX_UNIT) or item.unit,
     }
-    # Did any Zoho-owned field actually change? Only then do we touch push state.
+    # Did any pushable Zoho-owned field actually change? Only then do we push.
     zoho_dirty = any(
         getattr(item, fld) != new_values[fld]
         for fld in ZOHO_OWNED_EDITABLE_FIELDS
@@ -202,8 +207,10 @@ def update_item(
 
     item.name = new_values["name"]
     item.description = new_values["description"]
-    item.vendor = new_values["vendor"]
     item.unit = new_values["unit"]
+    # Vendor: Zoho-read-only for synced items; only editable for manual items.
+    if not item.zoho_item_id:
+        item.vendor = _clean(vendor, _MAX_VENDOR) or None
     item.material_code = _clean(material_code, _MAX_MATERIAL_CODE) or None
     item.daily_usage_rate = max(0.0, float(daily_usage_rate or 0))
     item.reorder_point = max(0.0, float(reorder_point or 0))
@@ -220,9 +227,37 @@ def update_item(
 
     saved = "ok"
     if zoho_dirty:
-        result = push_item_update(session, item)
-        saved = "synced" if result.status == "synced" else "local"
+        saved = _saved_token(push_item_update(session, item).status)
 
+    return RedirectResponse(url=f"/inventory/{item_id}?saved={saved}", status_code=303)
+
+
+def _saved_token(push_status: str) -> str:
+    """Map an outbound push status to the detail-page ``?saved=`` flash token."""
+    if push_status == PUSH_SYNCED:
+        return "synced"
+    if push_status == PUSH_FAILED:
+        return "failed"
+    return "local"  # pending
+
+
+@router.post("/inventory/{item_id:int}/sync/retry")
+def retry_item_sync(
+    item_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Owner-only: retry pushing this item's Zoho-owned fields to Zoho.
+
+    Re-runs ``push_item_update`` and redirects back to the detail page with a
+    ``saved=synced|failed|local`` flash. Intentionally minimal — no outbox UI.
+    """
+    if user.role != Role.OWNER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404)
+    saved = _saved_token(push_item_update(session, item).status)
     return RedirectResponse(url=f"/inventory/{item_id}?saved={saved}", status_code=303)
 
 
@@ -241,9 +276,9 @@ def edit_item_thresholds(
 
     Limited to daily usage, reorder point, critical point, and material_code
     (all PackTrack-owned, never pushed to Zoho). Zoho-owned fields (name,
-    description, vendor, unit — see ZOHO_OWNED_EDITABLE_FIELDS) are edited on
-    the detail page so they go through the pending-sync path and can never be
-    saved locally without marking Zoho sync pending.
+    description, unit — see ZOHO_OWNED_EDITABLE_FIELDS) are edited on the detail
+    page so they go through the integration-service push path. Vendor is
+    Zoho-read-only and is never editable from the inline row.
     """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
