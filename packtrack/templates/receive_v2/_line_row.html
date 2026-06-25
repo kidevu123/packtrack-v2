@@ -1,0 +1,29 @@
+{# One ReceiveCaseLine row inside a case block. Used both inline and as
+   HTMX swap targets for add/edit. #}
+<tr id="line-{{ line.id }}" class="text-sm">
+  <td class="py-1.5 pr-2">
+    <p class="font-medium text-stone-900 truncate" title="{{ item.name }}">{{ item.name }}</p>
+    {% if item.material_code %}
+      <p class="text-[11px] font-mono text-stone-500">{{ item.material_code }}</p>
+    {% endif %}
+  </td>
+  <td class="py-1.5 pr-2 text-stone-500">{{ line.supplier_lot_number or "—" }}</td>
+  <td class="py-1.5 pr-2 text-right tabular-nums text-stone-900">
+    {{ line.declared_quantity }} <span class="text-stone-400">{{ line.unit_of_measure }}</span>
+  </td>
+  <td class="py-1.5 pr-2 text-right tabular-nums">
+    {% if line.counted_quantity is not none %}
+      <span class="text-stone-900">{{ line.counted_quantity }}</span>
+    {% else %}
+      <span class="text-stone-300">—</span>
+    {% endif %}
+  </td>
+  <td class="py-1.5 text-right">
+    <form hx-post="/receive/v2/{{ receive.id }}/lines/{{ line.id }}/delete"
+          hx-target="#line-{{ line.id }}"
+          hx-swap="outerHTML"
+          hx-on::after-request="htmx.ajax('GET', '/receive/v2/{{ receive.id }}/totals', '#receive-totals')">
+      <button class="text-[11px] text-stone-400 hover:text-red-600">×</button>
+    </form>
+  </td>
+</tr>

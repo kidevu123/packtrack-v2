@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Start receive · {{ po.po_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-2xl{% endblock %}
+{% block content %}
+{{ ui.page_header(
+     title="Start a receive",
+     subtitle="Confirm the PO, then create the receive header.",
+     secondary=[{"label":"← Back to receiving","href":"/receive"}],
+) }}
+
+<div class="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-4">
+  <div>
+    <p class="text-[11px] uppercase tracking-wider font-semibold text-stone-400">Purchase order</p>
+    <p class="font-semibold text-stone-900">{{ po.po_number }}</p>
+    {% if po.zoho_po_id %}
+      <p class="text-xs text-stone-500 font-mono">Zoho: {{ po.zoho_po_id }}</p>
+    {% endif %}
+  </div>
+
+  {% if choices %}
+    <div>
+      <p class="text-[11px] uppercase tracking-wider font-semibold text-stone-400 mb-1">PO items ({{ choices|length }})</p>
+      <ul class="text-sm text-stone-700 space-y-0.5 max-h-48 overflow-y-auto">
+        {% for choice in choices %}
+          <li class="truncate" title="{{ choice.label }}">{{ choice.label }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/receive/v2/new" class="pt-2 border-t border-stone-100 flex items-center justify-end gap-3">
+    <input type="hidden" name="po_id" value="{{ po.id }}" />
+    <a href="/receive" class="text-sm text-stone-500 hover:text-stone-900">Cancel</a>
+    <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+      Start receive →
+    </button>
+  </form>
+</div>
+
+<p class="mt-4 text-[11px] text-stone-400">
+  The receive opens in <span class="font-medium">draft</span> status. Finalize / push lands in v2.6.0.
+</p>
+{% endblock %}

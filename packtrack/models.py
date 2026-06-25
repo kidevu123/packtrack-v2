@@ -42,6 +42,10 @@ class AttachmentKind(StrEnum):
     PI = "pi"
     ARTWORK = "artwork"
     OTHER = "other"
+    # v2.5.0 — vendor's carton-by-carton packing list (PDF/CSV/XLSX).
+    # Pointed at by Receive.packing_list_attachment_id; see
+    # docs/design/2026-06-25-receiving-vnext.md § 0.6.
+    PACKING_LIST = "packing_list"
 
 
 class ShipMethod(StrEnum):
@@ -527,3 +531,149 @@ class SalesEvent(SQLModel, table=True):
     qty_sold: int
     sold_at: datetime
     received_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Receiving vNext (v2.5.0 Stage 1) — case-first model. See
+# docs/design/2026-06-25-receiving-vnext.md. Gated by
+# settings.RECEIVING_VNEXT_ENABLED at the route layer; data layer is
+# always loaded so migrations + tests work, but no UI/path materializes
+# rows unless the flag is on.
+#
+# Stage 1 is draft + counting only:
+#   * Receive: header / one physical delivery event
+#   * ReceiveCase: one vendor-labeled carton in this receive
+#   * ReceiveCaseLine: item rows inside each case
+# Finalize, BoxReceipt materialization, Zoho push, and Luma push are
+# deferred to Stage 2 (v2.6.0).
+# ──────────────────────────────────────────────────────────────────────
+
+
+class ShipmentKind(StrEnum):
+    PARCEL = "parcel"
+    PALLETIZED = "palletized"
+
+
+class ReceiveStatus(StrEnum):
+    DRAFT = "draft"
+    COUNTING = "counting"
+    REVIEW = "review"
+    # Stage 2 (v2.6.0) terminal states — defined here so the column enum
+    # is forward-compatible without a follow-up migration.
+    FINALIZED = "finalized"
+    PUSHED_OK = "pushed_ok"
+    PUSH_FAILED = "push_failed"
+    CANCELLED = "cancelled"
+
+
+class CaseKind(StrEnum):
+    MASTER_CASE = "master_case"
+    DISPLAY_CASE = "display_case"
+    PALLET = "pallet"
+    LOOSE = "loose"
+    OTHER = "other"
+
+
+class Receive(SQLModel, table=True):
+    """One physical delivery event from a vendor.
+
+    A Receive groups vendor-labeled cases (``ReceiveCase``) and the
+    item-level quantity rows inside them (``ReceiveCaseLine``). It is
+    the case-first replacement for the legacy receive form's one-row-
+    per-PO-line flow. Stage 1 (v2.5.0) supports draft + counting only;
+    finalize / push are Stage 2.
+
+    ``purchase_order_id`` is nullable in the schema (future multi-PO
+    support — see design § 2.3) but the route layer requires it for v1.
+
+    ``receive_number`` is a human-friendly server-generated identifier
+    ``R-YYYY-NNNN`` (yearly sequence). It is what operators quote when
+    talking about a receive.
+
+    ``submission_id`` carries the v2.4.1 idempotency token upward from
+    the receive layer; it is generated at creation time and used by
+    finalize (Stage 2) to drive ``BoxReceipt.submission_id`` so a
+    re-submitted finalize is a no-op at the DB layer.
+
+    ``packing_list_attachment_id`` is a direct FK to the single primary
+    packing-list ``Attachment`` for this receive (decision § 0.6); the
+    schema for multi-attachment will follow a join table when needed.
+    """
+
+    __tablename__ = "receives"
+
+    id: int | None = Field(default=None, primary_key=True)
+    receive_number: str = Field(max_length=40, unique=True)
+    purchase_order_id: int | None = Field(default=None, foreign_key="purchase_orders.id", index=True)
+    shipment_id: int | None = Field(default=None, foreign_key="shipments.id")
+    shipment_kind: ShipmentKind = ShipmentKind.PARCEL
+    tracking_number: str | None = Field(default=None, max_length=120)
+    carrier: str | None = Field(default=None, max_length=120)
+    delivery_date: date
+    received_by_user_id: int = Field(foreign_key="users.id")
+    finalized_by_user_id: int | None = Field(default=None, foreign_key="users.id")
+    status: ReceiveStatus = Field(default=ReceiveStatus.DRAFT, index=True)
+    notes: str | None = None
+    submission_id: str | None = Field(default=None, max_length=64, unique=True)
+    packing_list_attachment_id: int | None = Field(default=None, foreign_key="attachments.id")
+    expected_case_count: int | None = None
+    expected_case_range: str | None = Field(default=None, max_length=40)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    finalized_at: datetime | None = None
+    pushed_at: datetime | None = None
+
+
+class ReceiveCase(SQLModel, table=True):
+    """One vendor-labeled carton/case in a Receive.
+
+    ``vendor_case_number`` is permissive free text (``"1"``,
+    ``"C-001"``, ``"BOX-A-7"``). Nullable while drafting; required at
+    finalize (Stage 2). A partial UNIQUE index on
+    ``(receive_id, vendor_case_number) WHERE vendor_case_number IS NOT NULL``
+    prevents accidental duplicate case numbers within one receive.
+    """
+
+    __tablename__ = "receive_cases"
+
+    id: int | None = Field(default=None, primary_key=True)
+    receive_id: int = Field(foreign_key="receives.id", index=True)
+    vendor_case_number: str | None = Field(default=None, max_length=120)
+    sequence: int
+    case_kind: CaseKind | None = None
+    notes: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReceiveCaseLine(SQLModel, table=True):
+    """Item-level quantity within a single ReceiveCase.
+
+    ``purchase_order_id`` is required (so a future multi-PO Receive can
+    attribute each line to the right PO). ``po_line_id`` is the
+    specific PO line the operator picked, if any. ``item_id`` is
+    required.
+
+    ``box_receipt_id`` is populated only at finalize (Stage 2), when
+    the case-line materializes a leaf ``BoxReceipt``.
+    """
+
+    __tablename__ = "receive_case_lines"
+
+    id: int | None = Field(default=None, primary_key=True)
+    receive_case_id: int = Field(foreign_key="receive_cases.id", index=True)
+    purchase_order_id: int = Field(foreign_key="purchase_orders.id")
+    po_line_id: int | None = Field(default=None, foreign_key="po_lines.id")
+    item_id: int = Field(foreign_key="items.id", index=True)
+    declared_quantity: float
+    counted_quantity: float | None = None
+    accepted_quantity: float | None = None
+    unit_of_measure: str = Field(default="EACH", max_length=20)
+    supplier_lot_number: str | None = Field(default=None, max_length=120)
+    photo_paths: list[str] | None = Field(
+        default=None, sa_column=Column(JSONB().with_variant(JSON(), "sqlite"))
+    )
+    notes: str | None = None
+    box_receipt_id: int | None = Field(default=None, foreign_key="box_receipts.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

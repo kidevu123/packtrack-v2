@@ -1,0 +1,18 @@
+{# Right-rail totals fragment. Refreshed after every case/line CRUD. #}
+{% if totals %}
+  <ul class="space-y-1 text-sm">
+    {% for row in totals %}
+      <li class="flex items-center justify-between gap-2">
+        <span class="text-stone-700 truncate" title="{{ row.item_name }}">{{ row.item_name }}</span>
+        <span class="tabular-nums text-stone-900">
+          {{ row.total_counted }} <span class="text-stone-400 text-[11px]">{{ row.unit }}</span>
+          {% if not row.has_count %}
+            <span class="ml-1 text-[10px] uppercase tracking-wider text-stone-400">declared</span>
+          {% endif %}
+        </span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="text-sm text-stone-400">No lines yet.</p>
+{% endif %}
