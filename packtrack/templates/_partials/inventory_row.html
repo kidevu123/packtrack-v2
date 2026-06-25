@@ -33,7 +33,7 @@
     {# Item col: thumb + name + secondary metadata line #}
     <div class="col-span-12 md:col-span-6 flex items-center gap-3 min-w-0">
       {% if it.image_path %}
-        <img src="/uploads/items/{{ it.image_path }}" alt="" class="size-11 rounded-md object-cover bg-stone-100 shrink-0" />
+        <img src="/uploads/items/{{ it.image_path }}" alt="" loading="lazy" decoding="async" class="size-11 rounded-md object-cover bg-stone-100 shrink-0" />
       {% else %}
         <span class="size-11 rounded-md bg-stone-100 grid place-items-center text-xs font-semibold text-stone-500 shrink-0">{{ it.name|initials }}</span>
       {% endif %}

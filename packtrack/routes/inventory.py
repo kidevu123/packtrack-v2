@@ -1,5 +1,6 @@
 import csv
 from io import StringIO
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -9,6 +10,7 @@ from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import Item, Role, User
 from packtrack.services.inventory import (
+    count_inventory_items,
     coverage_for_items,
     filter_inventory_items,
     suggested_reorder_qty,
@@ -16,6 +18,8 @@ from packtrack.services.inventory import (
 from packtrack.services.scope import get_scope
 
 router = APIRouter()
+
+PAGE_SIZE = 50
 
 
 @router.get("/inventory", response_class=HTMLResponse)
@@ -25,18 +29,33 @@ def inventory(
     vendor: str | None = None,
     stock_status: str | None = None,
     missing_material_code: bool = False,
+    page: int = 1,
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    items = filter_inventory_items(
-        session,
-        q=q,
-        vendor=vendor,
-        stock_status=stock_status,
-        missing_material_code=missing_material_code,
-    )
+    page = max(1, page)
+    offset = (page - 1) * PAGE_SIZE
+    filters = {
+        "q": q, "vendor": vendor, "stock_status": stock_status,
+        "missing_material_code": missing_material_code,
+    }
+    total = count_inventory_items(session, **filters)
+    items = filter_inventory_items(session, **filters, limit=PAGE_SIZE, offset=offset)
     coverage = coverage_for_items(session, items)
     suggested = {it.id: suggested_reorder_qty(it) for it in items}
+    total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    # Pagination links need to carry the active filters through. Build it
+    # here (not in Jinja) so it round-trips as a regular HTML-escaped string.
+    pager_qs_parts: list[tuple[str, str]] = []
+    if q:
+        pager_qs_parts.append(("q", q))
+    if vendor:
+        pager_qs_parts.append(("vendor", vendor))
+    if stock_status:
+        pager_qs_parts.append(("stock_status", stock_status))
+    if missing_material_code:
+        pager_qs_parts.append(("missing_material_code", "true"))
+    filter_qs = ("&" + urlencode(pager_qs_parts)) if pager_qs_parts else ""
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "inventory.html",
@@ -48,6 +67,11 @@ def inventory(
             "coverage": coverage,
             "suggested": suggested,
             "scope": get_scope(session),
+            "page": page,
+            "page_size": PAGE_SIZE,
+            "total": total,
+            "total_pages": total_pages,
+            "filter_qs": filter_qs,
         },
     )
 

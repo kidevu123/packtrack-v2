@@ -1,17 +1,19 @@
 # Current Phase Status
 
-## v2.4.1 — Luma P0 hardening (active on main, not yet deployed)
+## v2.4.2 — Inventory pagination + lazy thumbnails (active on main)
 
 | | |
 |---|---|
-| **Active version on main** | `2.4.1` |
-| **Last deployed version** | `2.4.0` (production at the v2.4.0 commit, tagged `v2.4.0`) |
+| **Active version on main** | `2.4.2` |
+| **Last deployed version** | `2.4.1` (production tagged `v2.4.1` at `a0ba7a6`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
 | **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
 | **SSO** | Public `/auth/sso` redirect derives Authentik base from `OIDC_ISSUER_URL` — no LAN-IP leaks. State + nonce TTL 1800 s. Browser login round-trip verified by operator 2026-06-24. |
 | **CSS smoke** | `scripts/smoke_test.sh` passes; deploy gate asserts size + sentinels. |
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
+
+**v2.4.2 scope:** server-side pagination on `/inventory` (default 50 items per page, `?page=N`), filter-aware Prev/Next links, `loading="lazy"` on item thumbnails. Fixes browser `ERR_HTTP2_PROTOCOL_ERROR` symptom caused by NPMplus/HTTP-2 upstream truncation at the proxy buffer boundary on the previous ~740 KB single-page inventory response. Reduces a default `/inventory` response to under 200 KB. No schema change. Receiving / Luma / Zoho unchanged.
 
 **v2.4.1 scope:** the three P0 Luma findings from the v2.4.0 audit —
 * **P0-1 fixed (schema-backed):** receiving form requires a hidden `submission_id` token. POST handler short-circuits when the same token already produced BoxReceipts on this PO. Migration `3c8a2b1e9d40` adds `submission_id` + `submission_line_index` columns and a partial UNIQUE index on `(purchase_order_id, submission_id, submission_line_index) WHERE submission_id IS NOT NULL` — the durable dedup backstop. **`box_number` is no longer the idempotency key.** Receive-form rows write `box_number = "PT-{packtrack_receipt_id}"` only because Luma still requires a non-empty value (`z.string().min(1)`).

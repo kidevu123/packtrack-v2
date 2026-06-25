@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import ceil
 
+from sqlalchemy import func
 from sqlmodel import Session, col, or_, select
 
 from packtrack.models import Item, POLine, POStatus, PurchaseOrder, ZohoMirror
@@ -34,15 +35,16 @@ def suggested_reorder_qty(item: Item, buffer_days: int = 14) -> int:
     return 100
 
 
-def filter_inventory_items(
+def _inventory_stmt(
     session: Session,
     *,
-    q: str | None = None,
-    vendor: str | None = None,
-    stock_status: str | None = None,
-    missing_material_code: bool = False,
-) -> list[Item]:
-    stmt = select(Item).order_by(Item.name)
+    q: str | None,
+    vendor: str | None,
+    stock_status: str | None,
+    missing_material_code: bool,
+):
+    # Stable sort: name then id, so pages don't shuffle when names tie.
+    stmt = select(Item).order_by(Item.name, Item.id)
     if not any([missing_material_code, stock_status, vendor, q]):
         stmt = stmt.where(
             or_(
@@ -81,7 +83,45 @@ def filter_inventory_items(
             stmt = stmt.where(
                 or_(Item.reorder_point <= 0, Item.current_stock > Item.reorder_point)
             )
+    return stmt
+
+
+def filter_inventory_items(
+    session: Session,
+    *,
+    q: str | None = None,
+    vendor: str | None = None,
+    stock_status: str | None = None,
+    missing_material_code: bool = False,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> list[Item]:
+    stmt = _inventory_stmt(
+        session,
+        q=q, vendor=vendor, stock_status=stock_status,
+        missing_material_code=missing_material_code,
+    )
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return session.exec(stmt).all()
+
+
+def count_inventory_items(
+    session: Session,
+    *,
+    q: str | None = None,
+    vendor: str | None = None,
+    stock_status: str | None = None,
+    missing_material_code: bool = False,
+) -> int:
+    stmt = _inventory_stmt(
+        session,
+        q=q, vendor=vendor, stock_status=stock_status,
+        missing_material_code=missing_material_code,
+    ).order_by(None)
+    return session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
 
 
 def coverage_for_items(session: Session, items: list[Item]) -> dict[int, CoverageRow]:
