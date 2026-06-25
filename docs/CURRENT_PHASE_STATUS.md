@@ -1,11 +1,12 @@
 # Current Phase Status
 
-## v2.4.2 — Inventory pagination + lazy thumbnails (active on main)
+## v2.4.2 — Inventory pagination + lazy thumbnails (deployed + tagged)
 
 | | |
 |---|---|
 | **Active version on main** | `2.4.2` |
-| **Last deployed version** | `2.4.1` (production tagged `v2.4.1` at `a0ba7a6`) |
+| **Last deployed version** | `2.4.2` (production at commit `2524cb5`, tagged `v2.4.2`) |
+| **Previous deployed version** | `2.4.1` (commit `a0ba7a6`, tagged `v2.4.1`) |
 | **Public URL** | `https://packtrack.booute.duckdns.org` |
 | **Deploy path** | `deploy/deploy.sh` only — see [`RUNBOOK_DEPLOY.md`](./RUNBOOK_DEPLOY.md). Ad-hoc `pct push` + `rsync --delete` is forbidden (caused the v2.2.0 unstyled-UI incident). |
 | **Healthz axes (expected)** | `gateway_configured=true`, `zoho_integration_configured=true`, `legacy_zoho_configured=false`, `zoho_configured=false`, `telegram_configured=false` |
@@ -14,6 +15,12 @@
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
 
 **v2.4.2 scope:** server-side pagination on `/inventory` (default 50 items per page, `?page=N`), filter-aware Prev/Next links, `loading="lazy"` on item thumbnails. Fixes browser `ERR_HTTP2_PROTOCOL_ERROR` symptom caused by NPMplus/HTTP-2 upstream truncation at the proxy buffer boundary on the previous ~740 KB single-page inventory response. Reduces a default `/inventory` response to under 200 KB. No schema change. Receiving / Luma / Zoho unchanged.
+
+**v2.4.2 ship-state (2026-06-25):**
+* Inventory P0 (browser-side ERR_HTTP2_PROTOCOL_ERROR) is **closed**. Root cause was a ~740 KB unpaginated `/inventory` response crossing an HTTP/2 / NPMplus upstream-buffer boundary; PackTrack-side pagination + lazy thumbnails removed the trigger entirely.
+* NPMplus buffer mitigation applied and **left in place** on LXC 104 at `/opt/npmplus/custom_nginx/server_proxy.conf` (raised `proxy_buffers 8x256k → 16x256k`, `proxy_busy_buffers_size 512k → 1m`, `proxy_max_temp_file_size 2m → 10m`). Backup: `server_proxy.conf.bak.20260625-123402`. The bump alone did not stop the truncation (next failure landed at exactly 512 KiB), but it is benign and may help other apps; leaving it.
+* HTTP/3 was **not** disabled for `packtrack.booute.duckdns.org`. The PackTrack-side pagination fix made HTTP/3 disable unnecessary. If proxy truncation reappears on a future large response, the next recommended step is to remove the two `listen 0.0.0.0:443 quic;` / `listen [::]:443 quic;` lines from `/opt/npmplus/nginx/proxy_host/18.conf` and reload — surgical and reversible.
+* Receiving vNext design doc is **committed and pushed** (`docs/design/2026-06-25-receiving-vnext.md`, commits `fbec604` + `5de5530` on `main`). All 14 v1 decisions are locked in § 0. **Implementation has not started.**
 
 **v2.4.1 scope:** the three P0 Luma findings from the v2.4.0 audit —
 * **P0-1 fixed (schema-backed):** receiving form requires a hidden `submission_id` token. POST handler short-circuits when the same token already produced BoxReceipts on this PO. Migration `3c8a2b1e9d40` adds `submission_id` + `submission_line_index` columns and a partial UNIQUE index on `(purchase_order_id, submission_id, submission_line_index) WHERE submission_id IS NOT NULL` — the durable dedup backstop. **`box_number` is no longer the idempotency key.** Receive-form rows write `box_number = "PT-{packtrack_receipt_id}"` only because Luma still requires a non-empty value (`z.string().min(1)`).
@@ -25,9 +32,11 @@
 
 **Previously shipped (v2.3.0):** reconciliation of the v2.2.0 Zoho integration receive path with main's Phase A/C/D inventory + forecasting + UI overhaul. Tagged `v2.3.0` at commit `a582f38`.
 
-**Open items:**
-- Browser visual review of `/`, `/po`, `/inventory`, `/inventory/forecast`, `/receive` after v2.4.0 deploy.
-- Optional `v2.4.0` git tag — held for after human visual review.
+**Open items (post v2.4.2):**
+- **Receiving vNext v2.5.0 stage 1** — kickoff prompt is in `docs/design/2026-06-25-receiving-vnext.md` § 9. Scope: new tables (`receives`, `receive_cases`, `receive_case_lines`), `AttachmentKind.PACKING_LIST`, nullable FK additions on `box_receipts`, draft + counting UI behind `RECEIVING_VNEXT_ENABLED` (default OFF). No Zoho/Luma push wiring in this stage (that's v2.6.0).
+- **Luma P1/P2 follow-ups** — tracked in `docs/PACKTRACK_LUMA_CONTRACT.md` § 7. P0s shipped in v2.4.1.
+- **Future Luma `box_number` cleanup** (coordinated with Luma) — § 9 of the contract doc. Relax Luma's `z.string().min(1)` and change the partial unique index so PackTrack can stop sending the `PT-{uuid}` compatibility mirror.
+- **Future HTTP/3 investigation** — only revisit if proxy-side truncation reappears on a large response after v2.4.2. Current state is healthy.
 - Local-only backup branches `backup/local-{main,feature-zoho-receives}-pre-reconcile-2026-06-24` retained for now; user to decide when to delete.
 - `.claude/` (per-user Claude Code settings) intentionally left untracked.
 
