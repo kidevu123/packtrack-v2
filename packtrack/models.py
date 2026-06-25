@@ -319,11 +319,11 @@ class BoxReceipt(SQLModel, table=True):
     """One supplier carton/box, received and recorded.
 
     The smallest unit PackTrack tracks for receipts. Each box is its own
-    row with its own ``packtrack_receipt_id`` (the shared idempotency key
-    we hand to Luma). ``material_code``, ``material_name``, and
-    ``supplier`` are **snapshotted at receive time** so a later rename of
-    the underlying ``Item`` does not retroactively change receiving
-    history (or break Luma reconciliation).
+    row with its own ``packtrack_receipt_id`` (the shared identifier we
+    hand to Luma). ``material_code``, ``material_name``, and ``supplier``
+    are **snapshotted at receive time** so a later rename of the
+    underlying ``Item`` does not retroactively change receiving history
+    (or break Luma reconciliation).
 
     Field-level rules (enforced in ``services/box_receipt.py``):
 
@@ -335,13 +335,37 @@ class BoxReceipt(SQLModel, table=True):
       at receive time, else ``PENDING``. NOT_READY rows are excluded from
       every Luma push path (P3 builder will refuse them).
 
-    Schema-level rules (enforced in the migration):
+    ``box_number`` semantics depend on the flow that created the row:
 
-    * ``UNIQUE(purchase_order_id, box_number)`` — the same supplier carton
-      cannot be entered twice against the same PO.
+    * ``POST /po/{id}/boxes`` (supplier-carton flow) — operator-typed
+      real supplier/manufacturer carton identifier; UNIQUE per PO.
+    * ``POST /receive/{po}`` (receiving form, post-v2.4.1) — a stable
+      Luma-compatibility value derived from ``packtrack_receipt_id``,
+      because Luma's current ``/api/integrations/packtrack/receipts``
+      endpoint requires a non-empty ``box_number`` (``z.string().min(1)``).
+      Receiving forms do not collect a per-box supplier identifier, so
+      mirroring the receipt id is the documented contract until Luma
+      relaxes that requirement.
+    * ``services/receive_catchup.py`` (legacy/back-fill) —
+      ``f"CATCHUP-{po_zoho_id}-{zoho_item_id}"``.
+    * ``UNIQUE(purchase_order_id, box_number)`` — enforced for back-
+      compat with the supplier-carton flow. Receive-form rows satisfy
+      it by inheriting the globally-unique ``packtrack_receipt_id``.
+
+    PackTrack's receiving-form idempotency is enforced by the partial
+    unique index ``uq_box_receipts_po_submission`` on
+    ``(purchase_order_id, submission_id, submission_line_index)``,
+    **NOT** by ``box_number``. See ``submission_id`` below.
+
+    Schema-level rules (enforced in migrations):
+
     * ``UNIQUE(packtrack_receipt_id)`` — every row has its own globally-
-      unique receipt id (UUID4 by default), the key Luma uses for
-      idempotency together with ``box_number``.
+      unique receipt id (UUID4 by default). This is the key Luma pairs
+      with ``box_number`` for its own idempotency.
+    * ``UNIQUE(purchase_order_id, box_number)`` — see above.
+    * Partial ``UNIQUE(purchase_order_id, submission_id,
+      submission_line_index) WHERE submission_id IS NOT NULL`` —
+      receiving-form double-submit guard (v2.4.1).
     """
 
     __tablename__ = "box_receipts"
@@ -369,6 +393,15 @@ class BoxReceipt(SQLModel, table=True):
 
     supplier_lot_number: str | None = Field(default=None, max_length=120)
     box_number: str = Field(max_length=120)
+
+    # Receiving-form idempotency (added in migration 3c8a2b1e9d40, v2.4.1).
+    # NULL on rows from any other flow — operator-typed supplier carton,
+    # catchup, legacy. Together with ``submission_line_index`` and a
+    # partial UNIQUE index on (po, submission_id, submission_line_index)
+    # they make repeat POSTs of the same form a no-op without leaning on
+    # ``box_number`` for dedup.
+    submission_id: str | None = Field(default=None, max_length=64, index=True)
+    submission_line_index: int | None = Field(default=None)
 
     declared_quantity: float
     counted_quantity: float | None = None

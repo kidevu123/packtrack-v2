@@ -100,34 +100,52 @@ def receiving_list(
 # ---------------------------------------------------------------------------
 
 
-def _submission_box_prefix(submission_id: str) -> str:
-    """Box-number prefix used to bind a BoxReceipt to its submission.
-
-    The DB-level UNIQUE constraint ``uq_box_receipts_po_box`` (defined in
-    migration ``b7c2d8e1f4a9_box_receipts.py``) is the durable guard
-    against double-submit: if two POSTs share the same submission_id they
-    would derive the same box_numbers on the same PO and the second insert
-    would violate the constraint. We use a 12-char hex prefix (3×10^14
-    distinct values) so the prefix-LIKE lookup is selective enough that
-    accidental cross-submission collisions are astronomically rare on
-    realistic submission volumes.
-    """
-    return f"RCPT-{submission_id[:12]}-"
-
-
 def _existing_boxes_for_submission(
     session: Session, po_id: int, submission_id: str,
 ) -> list[BoxReceipt]:
-    """Return any BoxReceipts already created by this submission_id on this PO."""
+    """Return any BoxReceipts already created by this submission_id on this PO.
+
+    Backed by the partial UNIQUE index
+    ``uq_box_receipts_po_submission`` (migration 3c8a2b1e9d40,
+    v2.4.1) — a race-losing concurrent POST hits the index and rolls
+    back at the DB layer.
+
+    Note: dedup is keyed on the ``submission_id`` column, NOT on
+    ``box_number``. ``box_number`` is the supplier-carton field in the
+    operator-typed flow and a Luma-compatibility mirror of
+    ``packtrack_receipt_id`` in the receive-form flow; neither
+    semantics belongs in an idempotency key.
+    """
     if not submission_id:
         return []
-    prefix = _submission_box_prefix(submission_id)
     return session.exec(
         select(BoxReceipt).where(
             BoxReceipt.purchase_order_id == po_id,
-            BoxReceipt.box_number.like(f"{prefix}%"),  # type: ignore[attr-defined]
+            BoxReceipt.submission_id == submission_id,
         )
     ).all()
+
+
+def _luma_compat_box_number(packtrack_receipt_id: str) -> str:
+    """Synthetic ``box_number`` for receiving-form rows.
+
+    Luma's ``/api/integrations/packtrack/receipts`` schema
+    (``z.string().min(1)`` on ``box_number``) currently requires a
+    non-empty value AND dedupes on
+    ``(packtrack_receipt_id, box_number)``. Receiving forms do not
+    collect a per-box supplier identifier, so we mirror the receipt id
+    to satisfy both constraints with a stable, documented value.
+
+    This is **not** PackTrack's idempotency key — that lives in
+    ``submission_id`` / ``submission_line_index``. The ``PT-`` prefix
+    makes it obvious in Luma logs that the value is PackTrack-
+    generated compatibility content rather than a real carton string.
+
+    See ``docs/PACKTRACK_LUMA_CONTRACT.md`` § 7 (P0-1) for the
+    follow-up: a coordinated Luma change that makes ``box_number``
+    optional would let us send empty here.
+    """
+    return f"PT-{packtrack_receipt_id}"
 
 
 def _render_already_processed(
@@ -311,8 +329,11 @@ async def submit_receiving(
     results: list[dict] = []
     zoho_submissions: list[ZohoReceiveSubmission] = []  # for zoho-integration-service
     po: PurchaseOrder | None = None
-    # Use submission_id as the operation id so each BoxReceipt's
-    # box_number falls under the same prefix the dedup check looks for.
+    # The Zoho integration service uses this as its session_id; reusing
+    # submission_id means a re-submit with the same token also dedups at
+    # the Zoho service layer (its Idempotency-Key is derived from the
+    # per-line packtrack_receipt_id, but the session_id provides extra
+    # tracing).
     luma_operation_id = submission_id
 
     for i, zid in enumerate(zoho_item_ids):
@@ -360,12 +381,15 @@ async def submit_receiving(
         confidence = compute_confidence(counted)
         luma_status = compute_luma_readiness(item.material_code)
         now = datetime.utcnow()
-        # box_number prefix is anchored to submission_id (= luma_operation_id);
-        # see _submission_box_prefix.
-        box_number = f"{_submission_box_prefix(luma_operation_id)}{i+1}"
+        # P0-1 (v2.4.1): submission_id + submission_line_index are the
+        # PackTrack-side idempotency keys. box_number is a Luma
+        # compatibility mirror of packtrack_receipt_id — NOT the dedup
+        # key (see model docstring and _luma_compat_box_number).
+        receipt_id = str(uuid.uuid4())
+        box_number = _luma_compat_box_number(receipt_id)
 
         box = BoxReceipt(
-            packtrack_receipt_id=str(uuid.uuid4()),
+            packtrack_receipt_id=receipt_id,
             purchase_order_id=po.id,
             item_id=item.id,
             material_code=(item.material_code or "").strip() or None,
@@ -373,6 +397,8 @@ async def submit_receiving(
             supplier=item.vendor,
             supplier_lot_number=lot_number,
             box_number=box_number,
+            submission_id=submission_id,
+            submission_line_index=i + 1,
             declared_quantity=declared,
             counted_quantity=counted,
             accepted_quantity=accepted,

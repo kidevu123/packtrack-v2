@@ -104,7 +104,7 @@ Reverse-engineered from `packtrack/services/receiving.py`, `packtrack/services/c
 
 | ID | Severity | Status | Description |
 |---|---|---|---|
-| **P0-1** | data integrity | ✅ **Fixed in v2.4.1** | Receiving form renders a hidden `submission_id`. POST handler returns 400 if absent and short-circuits to an idempotent "already processed" render when the same id already produced BoxReceipts on this PO. The existing `uq_box_receipts_po_box` UNIQUE constraint (`box_number = "RCPT-{submission_id[:12]}-{i+1}"`) is the durable backstop. Covered by `tests/test_receiving_idempotency.py`. |
+| **P0-1** | data integrity | ✅ **Fixed in v2.4.1 (schema-backed design)** | Receiving form renders a hidden `submission_id`. POST handler returns 400 if absent and short-circuits to an idempotent "already processed" render when the same id already produced BoxReceipts on this PO. Dedup is keyed on the new `BoxReceipt.submission_id` + `submission_line_index` columns (migration `3c8a2b1e9d40`); the partial unique index `uq_box_receipts_po_submission` on `(purchase_order_id, submission_id, submission_line_index) WHERE submission_id IS NOT NULL` is the durable backstop. **`box_number` is NOT the dedup key.** For receive-form rows, `box_number = "PT-{packtrack_receipt_id}"` — a stable Luma-compatibility mirror, because Luma's current `/api/integrations/packtrack/receipts` schema requires a non-empty `box_number` (see § 9 below). Covered by `tests/test_receiving_idempotency.py` (12 cases) and `tests/test_alembic_chain.py`. |
 | **P0-2** | data integrity | ✅ **Fixed in v2.4.1** | `process_luma_consumption` rejects negative `qty_consumed` as `skipped_invalid` (`reason: "negative qty_consumed (...)"`). Stock untouched; no `MaterialConsumptionEvent` row written. Non-numeric and missing `qty_consumed` go through the same skip path. |
 | **P0-3** | crash on malformed | ✅ **Fixed in v2.4.1** | Per-entry missing `material_code` is reported as `skipped_invalid` (`reason: "missing material_code"`) and the batch continues processing the remaining valid entries. No more `KeyError`/500 from one malformed entry. |
 | **G1** | inconsistency | open | Three different header names for the same shared secret: outbound `x-packtrack-secret` (receipts/items), outbound `X-Luma-PackTrack-Secret` (BOM fetch), inbound `x-luma-packtrack-secret` (consumption). HTTP header names are case-insensitive, but the *content* names differ. Pick one canonical name on each direction. |
@@ -115,7 +115,40 @@ Reverse-engineered from `packtrack/services/receiving.py`, `packtrack/services/c
 | **P2-3** | test coverage | partially closed | `tests/test_receiving_idempotency.py` now exercises the receiving POST end-to-end with a SQLite-backed TestClient + stubbed Luma/Zoho. Same pattern can be reused for retry-luma and the receipt-result-template render. |
 | **P3** | docs | ongoing | This contract was implicit until v2.4.0; kept current with each release. |
 
-## 8. Operator troubleshooting
+## 8. `box_number` semantics — by flow
+
+| Flow | Source of `box_number` | Carries real supplier carton id? |
+|---|---|---|
+| `POST /po/{id}/boxes` (operator-typed supplier carton) | `box_number: str = Form(...)` — operator types it | yes |
+| `POST /receive/{po}` (receiving form, v2.4.1+) | `"PT-{packtrack_receipt_id}"` — a stable Luma-compatibility mirror | **no** — synthetic; receive-form does not collect a per-box supplier id |
+| `services/receive_catchup.py` (legacy back-fill) | `f"CATCHUP-{po_zoho_id}-{zoho_item_id}"` | no — synthetic |
+
+The receive-form synthetic value exists **only** because Luma's
+`/api/integrations/packtrack/receipts` schema currently requires
+`box_number: z.string().min(1)` and dedupes Luma-side on
+`(packtrack_receipt_id, box_number)`. PackTrack idempotency does **not**
+depend on this string — it lives in the new `submission_id` /
+`submission_line_index` columns.
+
+## 9. Future cleanup: coordinated Luma `box_number` relaxation
+
+The cleanest end-state would let receive-form rows send `box_number: null`
+(or empty) and let Luma dedupe on `packtrack_receipt_id` alone. That's a
+**coordinated migration** on the Luma side:
+
+1. Drop the `.min(1)` constraint in
+   `~/luma/lib/integrations/packtrack/receipts.ts:45`.
+2. Replace the partial unique index
+   `packaging_lots_packtrack_box_unique` (currently keyed on
+   `(packtrack_receipt_id, box_number)`) with one keyed on
+   `packtrack_receipt_id` alone.
+3. On the PackTrack side: drop the `_luma_compat_box_number(...)` call;
+   send `box_number = None`/`""` for receive-form rows; keep operator-
+   typed `box_number` untouched for the supplier-carton flow.
+
+Not blocking; not scheduled. Open ticket only.
+
+## 10. Operator troubleshooting
 
 **Symptom: "Luma not connected" banner** → `LUMA_RECEIPT_WEBHOOK_URL` or `LUMA_PACKTRACK_SECRET` is empty in `/etc/packtrack/packtrack.env`. Check, then `systemctl restart packtrack`.
 

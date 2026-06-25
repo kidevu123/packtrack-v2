@@ -14,10 +14,10 @@
 | **Alembic head** | `f4a5b6c7d8e9` (`forecast_alert_sent_stock`) — unchanged. |
 
 **v2.4.1 scope:** the three P0 Luma findings from the v2.4.0 audit —
-* **P0-1 fixed:** receiving form now requires a hidden `submission_id` token. The POST handler short-circuits when the same token already produced BoxReceipts on this PO, leveraging the existing `uq_box_receipts_po_box` UNIQUE constraint as the durable backstop. **No schema change.**
-* **P0-2 fixed:** `process_luma_consumption` now rejects negative `qty_consumed` as `skipped_invalid`. Stock unchanged, no audit row written.
+* **P0-1 fixed (schema-backed):** receiving form requires a hidden `submission_id` token. POST handler short-circuits when the same token already produced BoxReceipts on this PO. Migration `3c8a2b1e9d40` adds `submission_id` + `submission_line_index` columns and a partial UNIQUE index on `(purchase_order_id, submission_id, submission_line_index) WHERE submission_id IS NOT NULL` — the durable dedup backstop. **`box_number` is no longer the idempotency key.** Receive-form rows write `box_number = "PT-{packtrack_receipt_id}"` only because Luma still requires a non-empty value (`z.string().min(1)`).
+* **P0-2 fixed:** `process_luma_consumption` rejects negative `qty_consumed` as `skipped_invalid`. Stock unchanged, no audit row written.
 * **P0-3 fixed:** per-entry missing `material_code` is now `skipped_invalid` with a reason; the batch continues processing the remaining valid entries.
-* docs/PACKTRACK_LUMA_CONTRACT.md updated to reflect the new behaviour.
+* docs/PACKTRACK_LUMA_CONTRACT.md updated; § 8 documents `box_number` semantics per-flow and § 9 captures the future coordinated Luma cleanup.
 
 **Previously shipped (v2.4.0):** UI polish — `_partials/ui.html` macro library, inventory page widened + clearer per-row hierarchy, forecast page collapsed to one shared row macro with clickable summary anchors + collapsible "No demand data" section, home "Needs you" reorder items grouped into one card with View All link.
 
