@@ -29,6 +29,7 @@ from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import (
     Attachment,
+    BoxReceipt,
     Item,
     POLine,
     PurchaseOrder,
@@ -541,4 +542,139 @@ def view_totals(
         request,
         "receive_v2/_totals.html",
         {"totals": totals_by_item(session, rec.id)},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 (v2.6.0) — review / finalize / retry-push
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{receive_id}/review", response_class=HTMLResponse)
+def review_receive(
+    request: Request,
+    receive_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Show blockers + warnings + a confirmation page. Pure read."""
+    from packtrack.services.receiving_v2_finalize import (
+        validate_receive_for_finalize,
+    )
+
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    po = session.get(PurchaseOrder, rec.purchase_order_id) if rec.purchase_order_id else None
+    blockers, warnings = validate_receive_for_finalize(session, rec)
+    cases = receive_cases(session, rec.id)
+    totals = totals_by_item(session, rec.id)
+    return _render(
+        request,
+        "receive_v2/review.html",
+        {
+            "user": user,
+            "receive": rec,
+            "po": po,
+            "cases": cases,
+            "totals": totals,
+            "blockers": blockers,
+            "warnings": warnings,
+            "can_finalize": not blockers,
+        },
+    )
+
+
+@router.post("/{receive_id}/finalize", response_class=HTMLResponse)
+def finalize_receive(
+    request: Request,
+    receive_id: int,
+    confirm_warnings: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Materialize BoxReceipts inside one DB transaction, then push to
+    Zoho + Luma. Warnings require ``confirm_warnings=true``; blockers
+    always reject."""
+    from packtrack.services.receiving_v2_finalize import (
+        materialize_box_receipts,
+        push_receive_to_integrations,
+        validate_receive_for_finalize,
+    )
+
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    blockers, warnings = validate_receive_for_finalize(session, rec)
+    if blockers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Receive has {len(blockers)} blocker(s); resolve and retry.",
+        )
+    if warnings and (confirm_warnings or "").lower() not in ("true", "1", "on", "yes"):
+        # 422 to distinguish from blocker rejection — operator must
+        # explicitly acknowledge warnings.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Receive has {len(warnings)} warning(s); re-submit with "
+                "confirm_warnings=true to acknowledge."
+            ),
+        )
+
+    boxes = materialize_box_receipts(session, rec, user)
+    outcome = push_receive_to_integrations(session, rec, user, box_receipts=boxes)
+    po = session.get(PurchaseOrder, rec.purchase_order_id) if rec.purchase_order_id else None
+    return _render(
+        request,
+        "receive_v2/result.html",
+        {
+            "user": user,
+            "receive": rec,
+            "po": po,
+            "outcome": outcome,
+            "boxes": boxes,
+        },
+    )
+
+
+@router.post("/{receive_id}/retry-push", response_class=HTMLResponse)
+def retry_push(
+    request: Request,
+    receive_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Re-fire push for leaves still in NOT_READY / PENDING / FAILED.
+    Already-pushed leaves are not re-pushed. Zoho re-submission is
+    safe via the existing ``PACK_TRACK_RECEIVE_{packtrack_receipt_id}``
+    Idempotency-Key."""
+    from packtrack.services.receiving_v2_finalize import (
+        retry_push_for_receive,
+    )
+
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if rec.status not in (ReceiveStatus.FINALIZED, ReceiveStatus.PUSH_FAILED, ReceiveStatus.PUSHED_OK):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Receive must be finalized before push can be retried.",
+        )
+    outcome = retry_push_for_receive(session, rec, user)
+    po = session.get(PurchaseOrder, rec.purchase_order_id) if rec.purchase_order_id else None
+    from sqlmodel import select as _select
+    boxes = session.exec(
+        _select(BoxReceipt).where(BoxReceipt.receive_id == rec.id)
+    ).all()
+    return _render(
+        request,
+        "receive_v2/result.html",
+        {
+            "user": user,
+            "receive": rec,
+            "po": po,
+            "outcome": outcome,
+            "boxes": boxes,
+        },
     )
