@@ -13,8 +13,15 @@ the `zoho-integration-service` PackTrack item endpoints (CT 9503, v1.30.0+):
 `GET/PATCH /zoho/pack_track/items/{item_id}` and `GET .../items/list`. PackTrack
 still **never calls Zoho directly**.
 * **Writable allowlist** — only `name`, `description`, `unit` are ever sent.
-  Auth via `X-Internal-Token` + `X-Brand`. `services/zoho_item_sync.py` owns the
-  HTTP and never imports OAuth/`zohoapis`/direct-Zoho code.
+  Auth via `Authorization: Bearer <app token>` + `X-Brand` (the proven receive
+  scheme; `X-Internal-Token` is also sent but is not sufficient alone — it
+  returns 401 on v1.30.0). `services/zoho_item_sync.py` owns the HTTP and never
+  imports OAuth/`zohoapis`/direct-Zoho code.
+* **Known service-side blocker (v1.30.0 / brand `haute_brands`)** — with correct
+  Bearer auth the item endpoints currently return `403 ZOHO_AUTH_FORBIDDEN`
+  ("App is not permitted to access this Zoho resource"). The PackTrack side is
+  complete and fails cleanly (`failed` + retry); enabling the write requires the
+  integration service to grant the app access to the Zoho items resource.
 * **Vendor is Zoho-read-only** — the service rejects vendor writes
   (`422 VENDOR_UPDATE_NOT_SUPPORTED`), so vendor is never sent. The detail page
   renders vendor read-only for Zoho-synced items ("Vendor comes from Zoho and is

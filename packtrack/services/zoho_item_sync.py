@@ -9,6 +9,10 @@ PackTrack never calls Zoho directly. Item writes go through the
 * ``GET   /zoho/pack_track/items/list``
 * ``PATCH /zoho/pack_track/items/{item_id}``
 
+Auth: ``Authorization: Bearer <ZOHO_INTEGRATION_APP_TOKEN>`` + ``X-Brand`` (the
+same scheme the receive endpoints use; ``X-Internal-Token`` is also sent for
+forward-compatibility but is not sufficient on its own).
+
 Only the service's writable allowlist is ever sent: ``name``, ``description``,
 ``unit``. The service does **not** support free-text vendor writes (a vendor
 PATCH returns ``422 VENDOR_UPDATE_NOT_SUPPORTED``), so vendor is treated as
@@ -101,9 +105,13 @@ def _item_url(zoho_item_id: str) -> str:
 
 
 def _item_headers() -> dict[str, str]:
-    # The PackTrack item endpoints authenticate with X-Internal-Token + X-Brand
-    # (distinct from the receive endpoints, which use a bearer token).
+    # Auth for the integration-service item endpoints. Empirically (v1.30.0 on
+    # CT 9503) the app authenticates via ``Authorization: Bearer`` + ``X-Brand``
+    # — the same scheme the receive endpoints use. ``X-Internal-Token`` alone
+    # returns 401, so we send the bearer token; ``X-Internal-Token`` is included
+    # as well (harmless, and forward-compatible if the service moves to it).
     return {
+        "Authorization": f"Bearer {settings.ZOHO_INTEGRATION_APP_TOKEN}",
         "X-Internal-Token": settings.ZOHO_INTEGRATION_APP_TOKEN,
         "X-Brand": settings.ZOHO_INTEGRATION_BRAND,
         "Content-Type": "application/json",

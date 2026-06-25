@@ -93,6 +93,8 @@ def test_patch_called_with_correct_url_headers_payload(session, monkeypatch):
     assert result.status == "synced"
     assert captured["method"] == "PATCH"
     assert captured["url"] == "https://svc.example.com/zoho/pack_track/items/z-1"
+    # Bearer is the header that actually authenticates against the service.
+    assert captured["headers"]["authorization"] == "Bearer tok-123"
     assert captured["headers"]["x-internal-token"] == "tok-123"
     assert captured["headers"]["x-brand"] == "fix"
     # Only the writable allowlist is sent.
