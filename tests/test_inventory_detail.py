@@ -136,7 +136,8 @@ def test_owner_edit_updates_fields_and_parks_pending(session, engine, monkeypatc
     fresh = session.get(Item, it.id)
     assert fresh.name == "FIX 15mg 12ct - Renamed"
     assert fresh.material_code == "MC-2"
-    assert fresh.vendor == "NewVendor"
+    # Vendor is Zoho-read-only for synced items (has zoho_item_id) → unchanged.
+    assert fresh.vendor == "Acme"
     assert fresh.unit == "boxes"
     assert fresh.daily_usage_rate == 2.5
     assert fresh.reorder_point == 20.0
@@ -220,3 +221,22 @@ def test_non_owner_cannot_edit(session, engine, monkeypatch):
     assert r.status_code == 403
     session.expire_all()
     assert session.get(Item, it.id).name != "hacked"
+
+
+def test_retry_sync_owner_redirects_with_status(session, engine, monkeypatch):
+    """Owner retry re-runs the push; with the service unconfigured in tests it
+    parks pending and redirects with saved=local."""
+    it = _seed(session, Role.OWNER)
+    client = _client(session, engine, monkeypatch, Role.OWNER)
+    r = client.post(f"/inventory/{it.id}/sync/retry", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == f"/inventory/{it.id}?saved=local"
+    session.expire_all()
+    assert session.get(Item, it.id).zoho_push_status == "pending"
+
+
+def test_retry_sync_forbidden_for_non_owner(session, engine, monkeypatch):
+    it = _seed(session, Role.AGENT)
+    client = _client(session, engine, monkeypatch, Role.AGENT)
+    r = client.post(f"/inventory/{it.id}/sync/retry", follow_redirects=False)
+    assert r.status_code == 403

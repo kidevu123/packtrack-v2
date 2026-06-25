@@ -194,11 +194,13 @@ def _reorder_level(d: dict) -> float | None:
 def _apply_item_sync_fields(record: Item, raw: dict) -> None:
     """Apply one Zoho item payload onto an ``Item`` record (mutates in place).
 
-    Loop / honesty protection: when an owner has edited a Zoho-owned field and
-    the edit is parked ``pending`` (no Zoho item-write path yet), the inbound
-    sync must NOT revert name/vendor/description/unit — otherwise the UI would
-    silently lose the edit. sku_code, stock, reorder level, and image always
-    track Zoho since they are not owner-editable in PackTrack.
+    Loop / honesty protection: when an owner has edited a Zoho-owned, pushable
+    field (name/description/unit) and the edit is parked ``pending`` (waiting on
+    the integration service), the inbound sync must NOT revert those three —
+    otherwise the UI would silently lose the edit before it syncs. ``vendor`` is
+    Zoho-read-only in PackTrack (the service rejects vendor writes), so it
+    always tracks Zoho here regardless of pending state. sku_code, stock,
+    reorder level, and image always track Zoho since they are not owner-editable.
 
     Outbound is only ever triggered by an explicit owner edit, never from here,
     so a sync pulling back identical values can never re-trigger an outbound
@@ -207,11 +209,12 @@ def _apply_item_sync_fields(record: Item, raw: dict) -> None:
     owner_edit_pending = record.zoho_push_status == "pending"
     if not owner_edit_pending:
         record.name = (raw.get("name") or "")[:240]
-        record.vendor = (_vendor_name(raw) or "")[:200] or record.vendor
         record.description = (raw.get("description") or "")[:50000] or None
         unit = (raw.get("unit") or "").strip()
         if unit:
             record.unit = unit[:40]
+    # Vendor is read-only in PackTrack → always reflect Zoho.
+    record.vendor = (_vendor_name(raw) or "")[:200] or record.vendor
     record.sku_code = (raw.get("sku") or "")[:120] or None
     record.current_stock = float(raw.get("actual_available_stock") or 0)
     rl = _reorder_level(raw)
