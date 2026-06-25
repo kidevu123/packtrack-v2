@@ -22,6 +22,7 @@ from packtrack.services.product_line import (
     group_sort_key,
 )
 from packtrack.services.scope import get_scope
+from packtrack.services.zoho_item_detail import build_extended_detail
 from packtrack.services.zoho_item_sync import (
     PUSH_FAILED,
     PUSH_SYNCED,
@@ -141,6 +142,9 @@ def item_detail(
         raise HTTPException(status_code=404)
     coverage = coverage_for_items(session, [item]).get(item.id)
     suggested = suggested_reorder_qty(item)
+    # Read-only extended Zoho detail (v2.6.0). Never raises — a service blip
+    # leaves ``extended.available`` False and the local detail still renders.
+    extended = build_extended_detail(item.zoho_item_id)
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "inventory_detail.html",
@@ -151,6 +155,7 @@ def item_detail(
             "suggested": suggested,
             "can_edit": user.role == Role.OWNER,
             "saved": saved or "",
+            "extended": extended,
         },
     )
 

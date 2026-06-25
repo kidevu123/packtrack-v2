@@ -5,6 +5,10 @@
 {% block content %}
 <style>[x-cloak] { display: none !important; }</style>
 
+{# Muted "Not set" fallback for read-only Zoho values. #}
+{% macro mval(v) %}{% if v not in (none, '') %}{{ v }}{% else %}<span class="text-stone-400">Not set</span>{% endif %}{% endmacro %}
+{% macro mmoney(v) %}{% if v is not none %}{{ v|money('USD') }}{% else %}<span class="text-stone-400">Not set</span>{% endif %}{% endmacro %}
+
 {# Stock tone — mirrors the row partial so badges read consistently. #}
 {% set stock_tone = "ok" %}
 {% set stock_label = "Healthy" %}
@@ -159,6 +163,132 @@
           <div class="sm:col-span-2"><dt class="text-stone-500 text-xs">Description</dt><dd class="text-stone-700 whitespace-pre-line">{{ it.description or '—' }}</dd></div>
         </dl>
       </section>
+    {% endif %}
+
+    {# ── Extended Zoho detail (v2.6.0, read-only) ───────────────────────── #}
+    {% if it.zoho_item_id %}
+      {% if extended and extended.warnings %}
+        <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
+          <span class="font-medium">Operator note:</span>
+          {{ extended.warnings | join(' · ') }}
+        </div>
+      {% endif %}
+
+      {% if extended and extended.available %}
+        {% set zi = extended.item %}
+        {% set cat_name = (zi.category.category_name or zi.category.name) if zi.category else none %}
+
+        {# Primary Details #}
+        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+          <h2 class="text-sm font-medium text-stone-700 mb-3">Primary details <span class="text-stone-400 font-normal">· from Zoho</span></h2>
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div><dt class="text-stone-500 text-xs">Item name</dt><dd>{{ mval(zi.name) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Zoho item ID</dt><dd class="font-mono text-xs">{{ mval(zi.item_id) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">SKU</dt><dd class="font-mono">{{ mval(zi.sku) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Unit</dt><dd>{{ mval(zi.unit) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Category</dt><dd>{{ mval(cat_name) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Brand</dt><dd>{{ mval(zi.brand) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Manufacturer</dt><dd>{{ mval(zi.manufacturer) }}</dd></div>
+            <div>
+              <dt class="text-stone-500 text-xs">Preferred vendor <span class="text-stone-400">(read-only)</span></dt>
+              <dd>{{ mval(zi.preferred_vendor or zi.vendor) }}</dd>
+            </div>
+            <div class="sm:col-span-2">
+              <dt class="text-stone-500 text-xs">Standard description <span class="text-stone-400">(Zoho item description)</span></dt>
+              <dd class="text-stone-700 whitespace-pre-line">{{ mval(zi.description) }}</dd>
+            </div>
+            <div class="sm:col-span-2">
+              <dt class="text-stone-500 text-xs">Browsing group <span class="text-stone-400">(PackTrack-derived, not Zoho)</span></dt>
+              <dd>{{ mval(it.product_line) }}</dd>
+            </div>
+          </dl>
+        </section>
+
+        {# Packaging / Custom Fields #}
+        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+          <h2 class="text-sm font-medium text-stone-700 mb-1">Packaging &amp; custom fields <span class="text-stone-400 font-normal">· from Zoho</span></h2>
+          <p class="text-[11px] text-stone-400 mb-3">Read-only in this release. Dropdowns show Zoho options but can't be saved yet.</p>
+          {% if extended.custom_fields %}
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              {% for row in extended.custom_fields %}
+                <div class="{{ 'sm:col-span-2' if row.api_name == 'cf_description' else '' }}">
+                  <dt class="text-stone-500 text-xs">
+                    {{ row.label }}
+                    {% if row.api_name == 'cf_product_line' %}<span class="text-stone-400">(Zoho Product Line)</span>{% endif %}
+                    {% if row.api_name == 'cf_description' %}<span class="text-stone-400">(custom field)</span>{% endif %}
+                  </dt>
+                  <dd class="mt-0.5">
+                    {% if row.is_dropdown %}
+                      <select disabled aria-label="{{ row.label }}"
+                              class="w-full rounded-lg border-stone-200 bg-stone-50 text-sm text-stone-600 cursor-not-allowed">
+                        {% if not row.is_set %}<option selected>— Not set —</option>{% endif %}
+                        {% if row.value and not row.value_in_options %}<option selected>{{ row.value }}</option>{% endif %}
+                        {% for opt in row.options %}
+                          <option {% if row.is_set and opt == row.value %}selected{% endif %}>{{ opt }}</option>
+                        {% endfor %}
+                      </select>
+                      {% if row.value and not row.value_in_options %}
+                        <span class="mt-1 inline-block">{{ ui.status_badge("value not in Zoho options", tone="warn", size="sm") }}</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-stone-700 whitespace-pre-line">{{ mval(row.value) }}</span>
+                    {% endif %}
+                  </dd>
+                </div>
+              {% endfor %}
+            </dl>
+          {% else %}
+            <p class="text-sm text-stone-400">No custom fields available.</p>
+          {% endif %}
+        </section>
+
+        {# Zoho Accounting & Inventory #}
+        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+          <h2 class="text-sm font-medium text-stone-700 mb-1">Zoho accounting &amp; inventory</h2>
+          <p class="text-[11px] text-stone-400 mb-3">Read-only. Pricing, accounts, valuation and stock are owned by Zoho.</p>
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <div><dt class="text-stone-500 text-xs">Selling price</dt><dd class="tabular-nums">{{ mmoney(zi.selling_price) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Cost price</dt><dd class="tabular-nums">{{ mmoney(zi.cost_price) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Sales account</dt><dd>{{ mval(zi.sales_account.account_name if zi.sales_account else none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Purchase account</dt><dd>{{ mval(zi.purchase_account.account_name if zi.purchase_account else none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Inventory account</dt><dd>{{ mval(zi.inventory_account.account_name if zi.inventory_account else none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Valuation method</dt><dd>{{ mval(zi.valuation_method|upper if zi.valuation_method else none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">On hand (Zoho)</dt><dd class="tabular-nums">{{ zi.current_stock|qty if zi.current_stock is not none else mval(none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Available (Zoho)</dt><dd class="tabular-nums">{{ zi.available_stock|qty if zi.available_stock is not none else mval(none) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Reorder point (Zoho)</dt><dd class="tabular-nums">{{ zi.reorder_point|qty if zi.reorder_point is not none else mval(none) }}</dd></div>
+            <div class="sm:col-span-2">
+              <dt class="text-stone-500 text-xs">Reporting tags</dt>
+              <dd>
+                {% if zi.reporting_tags %}
+                  <div class="flex flex-wrap gap-1.5 mt-1">
+                    {% for tag in zi.reporting_tags %}
+                      {% if tag is mapping %}
+                        {{ ui.status_badge((tag.tag_name ~ ': ' ~ tag.tag_option_name) if tag.tag_option_name else tag.tag_name, tone="muted", size="sm") }}
+                      {% else %}
+                        {{ ui.status_badge(tag, tone="muted", size="sm") }}
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <span class="text-stone-400">None</span>
+                {% endif %}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        {# Images / Attachments #}
+        {% if zi.image and (zi.image.image_id or zi.image.image_name) %}
+          <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+            <h2 class="text-sm font-medium text-stone-700 mb-3">Images &amp; attachments <span class="text-stone-400 font-normal">· from Zoho</span></h2>
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <div><dt class="text-stone-500 text-xs">Image name</dt><dd class="truncate">{{ mval(zi.image.image_name) }}</dd></div>
+              <div><dt class="text-stone-500 text-xs">Type</dt><dd>{{ mval(zi.image.image_type) }}</dd></div>
+            </dl>
+          </section>
+        {% endif %}
+
+      {% endif %}
     {% endif %}
 
     {# Open coverage / POs #}
