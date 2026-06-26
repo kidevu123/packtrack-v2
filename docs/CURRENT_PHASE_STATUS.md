@@ -1,6 +1,37 @@
 # Current Phase Status
 
-## v2.7.2 — Stabilization: deterministic OIDC test + safe canary marker (feature branch, NOT deployed)
+## v2.7.3 — Receiving vNext: packing-list attachment + canary mark performed (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-vnext-v2.7.3-packing-list` (off `origin/main` @ `2d5d1cb`, in a separate worktree so the v2.8.0 WIP in the main repo stays untouched) |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — `Receive.packing_list_attachment_id` + `AttachmentKind.PACKING_LIST` shipped in Stage 1) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production. |
+| **Status** | Code complete; tests green (266 passed; +11 over v2.7.2's 255); **not merged, not deployed, not tagged**. |
+
+**v2.7.3 scope**:
+
+* **Canary receive marked as test/canary in production.** Used the v2.7.2 `POST /receive/v2/1/mark-test` route from inside LXC 200 via an authenticated OWNER session cookie (user id=2, Sahil) at 2026-06-26 20:10 UTC. The mark added a marker line to `Receive 1.notes` and emitted **POEvent id=132** (`receive_marked_test`, actor=2, message includes the reason "vNext Stage 2 canary; Zoho PR-00583 and Luma lot 995751ce-6d85-45cc-a772-8fe775699ec7 intentionally left in place"). `BoxReceipt 139` remained intact with `luma_push_status=pushed`. **No external Zoho/Luma API was called** during the mark (verified by journal grep for `luma|zoho-integration|httpx` in the operation's time window).
+* **Packing-list attachment upload + display** wired for Receiving vNext. One primary packing list per Receive (v1), stored as a regular `Attachment(kind=PACKING_LIST)` row pointed at by `Receive.packing_list_attachment_id`. Upload route `POST /receive/v2/{id}/packing-list` (OWNER + RECEIVING, flag-gated). Replace updates the pointer and bumps the attachment version; old attachment row is kept for audit. Files stored under `UPLOAD_DIR/packing_list/<PO_PL_<hex>>.<ext>`. Allowed extensions: PDF, CSV, XLS/XLSX, JPG, JPEG, PNG, WebP, HEIC. **No parsing**, **no expected-vs-actual reconciliation**, **no Zoho/Luma changes**, **no finalize/BoxReceipt mutations**.
+* **Receive page UI**: right-rail "Packing list" card shows empty state with upload form, or attached filename + View link + Replace form when attached. Reuses existing `/uploads/<rel_path>` static mount.
+
+**Tests (+11 cases, total 266)** in `tests/test_v2_7_3_packing_list.py`: flag-off → 404; OWNER + RECEIVING happy paths; DESIGN forbidden; Attachment row creation + pointer set + correct `kind`/`po_id`/`version`/`source`/`uploaded_by_id`; receive page renders attached state + replace form; replace swaps pointer + keeps old row + bumps version; disallowed extension rejected; receive without PO rejected; legacy `/receive/{zoho_po_id}` regression; mark-test route still reachable (smoke).
+
+**Hard contract preserved.** No schema change. No Zoho payload change. No Luma payload change. No finalize side effects. No external API calls from the upload route.
+
+---
+
+## v2.7.2 — Stabilization: deterministic OIDC test + safe canary marker (deployed + tagged)
+
+| | |
+|---|---|
+| **Tag** | `v2.7.2` (annotated `2d25328a…`) at commit `2d5d1cb` — pushed to origin. |
+| **Production version** | `2.7.2` (per `/healthz` after deploy at 2026-06-26 19:57 UTC; **superseded by v2.7.3** if/when this PR ships). |
+| **Merged via** | PR [#8](https://github.com/kidevu123/packtrack-v2/pull/8) (squash) into main on 2026-06-26 19:51 UTC. |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
+| **Canary mark on Receive id=1** | **PERFORMED 2026-06-26 20:10 UTC.** See v2.7.3 section above for POEvent id and verification details. |
+
+Original v2.7.2 ship-state section:
 
 | | |
 |---|---|

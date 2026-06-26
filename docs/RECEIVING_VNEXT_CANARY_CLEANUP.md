@@ -1,6 +1,7 @@
 # Receiving vNext canary cleanup audit + plan
 
-**Status:** AUDIT ONLY. Nothing in this document has been executed.
+**Status (2026-06-26):** PT-side audit marker **PERFORMED** via the v2.7.2 `POST /receive/v2/1/mark-test` route at 20:10 UTC. POEvent id=132 (`receive_marked_test`) recorded by user id=2 (Sahil). `Receive 1.notes` now carries the marker line `[Marked as TEST/CANARY by Sahil at 2026-06-26T20:10:38Z] — vNext Stage 2 canary; Zoho PR-00583 and Luma lot 995751ce-6d85-45cc-a772-8fe775699ec7 intentionally left in place. (External Zoho/Luma records were NOT reversed.)`. `BoxReceipt 139` and the original `receive_finalized` + `receive_pushed_ok` POEvents remain intact. **Zoho `PR-00583` and Luma lot `995751ce-…` were NOT touched** — confirmed by journal grep showing zero `luma`/`zoho-integration`/`httpx` activity during the 20:10:00–20:11:30 window.
+
 **Date:** 2026-06-26.
 **Author / safety reviewer:** Sahil + the AI assistant pair.
 
