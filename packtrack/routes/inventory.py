@@ -22,7 +22,7 @@ from packtrack.services.product_line import (
     group_sort_key,
 )
 from packtrack.services.scope import get_scope
-from packtrack.services.zoho_item_detail import build_extended_detail
+from packtrack.services.zoho_item_detail import build_extended_detail, product_line_options
 from packtrack.services.zoho_item_sync import (
     PUSH_FAILED,
     PUSH_SYNCED,
@@ -173,6 +173,8 @@ def update_item(
     material_code: str = Form(""),
     vendor: str = Form(""),
     unit: str = Form(""),
+    cf_product_line: str = Form(""),
+    cf_product_line_original: str = Form(""),
     daily_usage_rate: float = Form(0),
     reorder_point: float = Form(0),
     critical_point: float = Form(0),
@@ -191,6 +193,11 @@ def update_item(
     change to Zoho through the integration service. ``vendor`` is Zoho-read-only
     for synced items (the service rejects vendor writes); it is only locally
     editable for manual items that have no ``zoho_item_id``.
+
+    The Zoho ``cf_product_line`` dropdown custom field (v2.7.0) is the only
+    custom field that is editable. It is validated server-side against the live
+    metadata options before any write; an empty string clears it. It is NOT the
+    PackTrack-derived ``product_line`` browsing group, which is left untouched.
     """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -225,16 +232,65 @@ def update_item(
     # Owner override locks reorder_point from being overwritten by Zoho sync,
     # matching the existing inline-edit behavior.
     item.reorder_point_locked = True
-    # Keep the brand grouping in step with the (possibly edited) name.
+    # Keep the brand grouping in step with the (possibly edited) name. This is
+    # PackTrack's derived browsing group and is deliberately independent of the
+    # Zoho ``cf_product_line`` custom field handled below.
     item.product_line = derive_product_line(item.name)
     session.add(item)
     session.commit()
 
+    # Zoho cf_product_line: validate + change-detect before any outbound write.
+    # When the editable dropdown was not rendered (non-owner, manual item, or
+    # metadata unavailable) both fields default to "" and compare equal → no-op.
+    cf_to_send, cf_flash = _resolve_cf_product_line(
+        item, cf_product_line, cf_product_line_original
+    )
+
     saved = "ok"
-    if zoho_dirty:
-        saved = _saved_token(push_item_update(session, item).status)
+    if zoho_dirty or cf_to_send is not None:
+        saved = _saved_token(
+            push_item_update(session, item, cf_product_line=cf_to_send).status
+        )
+    if cf_flash:
+        # A rejected/unvalidatable custom-field edit takes flash priority so the
+        # owner knows the dropdown was not saved (scalar fields may still have
+        # been pushed above).
+        saved = cf_flash
 
     return RedirectResponse(url=f"/inventory/{item_id}?saved={saved}", status_code=303)
+
+
+def _resolve_cf_product_line(
+    item: Item,
+    submitted: str,
+    original: str,
+) -> tuple[str | None, str | None]:
+    """Validate + change-detect an owner's Zoho ``cf_product_line`` edit.
+
+    Returns ``(cf_to_send, flash)`` where ``cf_to_send`` is the value to write
+    (``""`` clears, a non-empty string sets, ``None`` means "don't write") and
+    ``flash`` is an optional ``?saved=`` token describing a rejection.
+
+    Note: FastAPI coerces an empty form field to ``""`` (it cannot be told apart
+    from an absent one), so "unchanged" — including the not-rendered case where
+    both fields default to ``""`` — is detected purely by comparing the submitted
+    value to the hidden original.
+
+    * Unchanged or item not Zoho-synced → ``(None, None)``.
+    * Metadata unavailable → ``(None, "cf_unavailable")`` (can't validate; never
+      post an unvalidated value).
+    * Empty string (clear) or a value present in live options → ``(value, None)``.
+    * Anything else → ``(None, "cf_invalid")`` (no write).
+    """
+    value = (submitted or "").strip()
+    if not item.zoho_item_id or value == (original or "").strip():
+        return None, None  # not applicable / unchanged
+    options = product_line_options()
+    if options is None:
+        return None, "cf_unavailable"
+    if value == "" or value in options:
+        return value, None
+    return None, "cf_invalid"
 
 
 def _saved_token(push_status: str) -> str:

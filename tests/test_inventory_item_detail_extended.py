@@ -201,14 +201,20 @@ def test_detail_renders_with_extended_success(session, engine, monkeypatch):
     assert "FIFO" in body
 
 
-def test_extended_dropdown_is_disabled_with_zoho_options(session, engine, monkeypatch):
+def test_owner_cf_product_line_is_editable_with_zoho_options(session, engine, monkeypatch):
+    """v2.7.0: owners get an *editable* cf_product_line dropdown (not disabled).
+
+    The detailed edit/clear/validation behavior lives in
+    ``test_inventory_cf_product_line_edit.py``; this just confirms the control
+    is rendered enabled with the Zoho options for an owner.
+    """
     it = _seed(session, Role.OWNER)
     import packtrack.routes.inventory as inv
     monkeypatch.setattr(inv, "build_extended_detail", lambda _zid: _full_extended())
     client = _client(session, engine, monkeypatch, Role.OWNER)
     body = client.get(f"/inventory/{it.id}").text
-    # cf_product_line renders as a disabled <select> exposing the Zoho options.
-    assert "<select disabled" in body
+    # cf_product_line renders as an enabled <select name="cf_product_line">.
+    assert '<select name="cf_product_line"' in body
     assert "Zoho Product Line" in body
     for opt in ("7OH", "MIT A", "MIT B"):
         assert opt in body

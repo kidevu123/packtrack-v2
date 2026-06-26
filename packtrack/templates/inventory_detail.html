@@ -43,6 +43,16 @@
        title="Saved locally · Zoho sync pending",
        body="The Zoho-owned fields (name, description, unit) were saved in PackTrack. They are parked as pending until the item has a Zoho id / the integration service is configured, and are protected from being overwritten by the next inbound sync.",
        tone="warn") }}
+{% elif saved == 'cf_invalid' %}
+  {{ ui.insight_card(
+       title="Zoho Product Line not saved",
+       body="The selected option isn’t a valid Zoho Product Line value, so it wasn’t sent. Other changes (if any) were saved. Pick one of the listed Zoho options and try again.",
+       tone="danger") }}
+{% elif saved == 'cf_unavailable' %}
+  {{ ui.insight_card(
+       title="Zoho Product Line not saved",
+       body="Zoho options couldn’t be loaded to validate your choice, so the Product Line change wasn’t sent. Other changes (if any) were saved. Try again once Zoho metadata is available.",
+       tone="warn") }}
 {% endif %}
 
 {# ── Header ─────────────────────────────────────────────────────────── #}
@@ -136,6 +146,37 @@
           </label>
         </div>
 
+        {# ── Zoho Product Line (cf_product_line) — the only editable Zoho custom field (v2.7.0) ── #}
+        {% if it.zoho_item_id and extended and extended.available %}
+          {% set pl_row = extended.custom_fields | selectattr('api_name', 'equalto', 'cf_product_line') | list | first %}
+          <div class="pt-3 border-t border-stone-100">
+            <span class="text-xs text-stone-500">Zoho Product Line
+              <span class="text-stone-400">(Zoho custom field — not the PackTrack browsing group)</span>
+            </span>
+            {% if pl_row and pl_row.is_dropdown and pl_row.options and extended.metadata_available %}
+              <input type="hidden" name="cf_product_line_original" value="{{ pl_row.value if pl_row.is_set else '' }}" />
+              <select name="cf_product_line" aria-label="Zoho Product Line"
+                      class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0">
+                <option value="" {% if not pl_row.is_set %}selected{% endif %}>— Not set —</option>
+                {% if pl_row.value and not pl_row.value_in_options %}
+                  <option value="{{ pl_row.value }}" selected>{{ pl_row.value }} (current — not a Zoho option)</option>
+                {% endif %}
+                {% for opt in pl_row.options %}
+                  <option value="{{ opt }}" {% if pl_row.is_set and opt == pl_row.value %}selected{% endif %}>{{ opt }}</option>
+                {% endfor %}
+              </select>
+              {% if pl_row.value and not pl_row.value_in_options %}
+                <span class="mt-1 inline-block">{{ ui.status_badge("current value not in Zoho options", tone="warn", size="sm") }}</span>
+              {% endif %}
+              <span class="mt-1 block text-[11px] text-stone-400">Saves to Zoho via the integration service. Choose “— Not set —” to clear it.</span>
+            {% else %}
+              {# Metadata/options unavailable → read-only current value + soft warning, never an editable dropdown. #}
+              <div class="mt-1 text-sm text-stone-700">{{ mval(pl_row.value if pl_row else none) }}</div>
+              <span class="mt-1 block text-[11px] text-amber-700">Zoho options are unavailable right now, so this field can’t be edited. Showing the current value.</span>
+            {% endif %}
+          </div>
+        {% endif %}
+
         <div class="flex items-center justify-between gap-3 pt-2 border-t border-stone-100">
           <p class="text-[11px] text-stone-400">
             On-hand stock syncs from Zoho / receipts and isn't editable here.
@@ -207,10 +248,16 @@
         {# Packaging / Custom Fields #}
         <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
           <h2 class="text-sm font-medium text-stone-700 mb-1">Packaging &amp; custom fields <span class="text-stone-400 font-normal">· from Zoho</span></h2>
-          <p class="text-[11px] text-stone-400 mb-3">Read-only in this release. Dropdowns show Zoho options but can't be saved yet.</p>
-          {% if extended.custom_fields %}
+          {% if can_edit %}
+            <p class="text-[11px] text-stone-400 mb-3">Read-only. Only “Zoho Product Line” is editable — see the edit form above.</p>
+          {% else %}
+            <p class="text-[11px] text-stone-400 mb-3">Read-only.</p>
+          {% endif %}
+          {# Owners edit cf_product_line in the form above, so hide it here to avoid a duplicate control. #}
+          {% set visible_cfs = extended.custom_fields | rejectattr('api_name', 'equalto', 'cf_product_line') | list if can_edit else extended.custom_fields %}
+          {% if visible_cfs %}
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              {% for row in extended.custom_fields %}
+              {% for row in visible_cfs %}
                 <div class="{{ 'sm:col-span-2' if row.api_name == 'cf_description' else '' }}">
                   <dt class="text-stone-500 text-xs">
                     {{ row.label }}

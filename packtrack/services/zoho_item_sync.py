@@ -14,9 +14,23 @@ same scheme the receive endpoints use; ``X-Internal-Token`` is also sent for
 forward-compatibility but is not sufficient on its own).
 
 Only the service's writable allowlist is ever sent: ``name``, ``description``,
-``unit``. The service does **not** support free-text vendor writes (a vendor
-PATCH returns ``422 VENDOR_UPDATE_NOT_SUPPORTED``), so vendor is treated as
-Zoho-read-only in PackTrack and is never included in an outbound payload.
+``unit`` and — since v2.7.0 — the single Zoho dropdown custom field
+``cf_product_line`` (sent as ``custom_fields.cf_product_line``). The service does
+**not** support free-text vendor writes (a vendor PATCH returns
+``422 VENDOR_UPDATE_NOT_SUPPORTED``), so vendor is treated as Zoho-read-only in
+PackTrack and is never included in an outbound payload. No other custom field is
+ever sent and raw ``customfield_id`` values are never used.
+
+``cf_product_line`` (Zoho custom field) note
+--------------------------------------------
+This is the Zoho dropdown custom field (options 7OH / MIT A / MIT B), NOT
+PackTrack's derived ``Item.product_line`` browsing group (FIX / FIX Beyond /
+Unassigned). The two are kept strictly separate. The selected value is **not**
+persisted in a local PackTrack column; the extended Zoho item detail is the
+source of truth. A consequence is that a *failed* ``cf_product_line`` push cannot
+be re-sent by the generic "Retry sync" action (which only re-pushes the locally
+stored name/description/unit). Retrying simply re-asserts those scalar fields;
+the owner re-selects the dropdown to retry a custom-field write.
 
 State machine on ``Item``
 -------------------------
@@ -55,8 +69,14 @@ ZOHO_OWNED_EDITABLE_FIELDS: frozenset[str] = frozenset(
     {"name", "description", "unit"}
 )
 
-# The service's PATCH writable allowlist — the only keys we ever send.
+# The service's PATCH writable allowlist — the only scalar keys we ever send.
 _PATCH_FIELDS: tuple[str, ...] = ("name", "description", "unit")
+
+# The only Zoho custom field PackTrack may write (v2.7.0). Sent under
+# ``custom_fields`` as ``{"cf_product_line": "<option name or empty string>"}``.
+# The integration service validates the value against live Zoho options and
+# never creates new options. An empty string clears the field.
+CF_PRODUCT_LINE: str = "cf_product_line"
 
 _ITEMS_PATH = "/zoho/pack_track/items"
 
@@ -234,22 +254,42 @@ def _align_from_service(item: Item, normalized: dict[str, Any]) -> None:
         item.unit = unit[:40]
 
 
-def _outbound_payload(item: Item) -> dict[str, Any]:
-    """Build the PATCH body from the writable allowlist (never vendor)."""
-    return {
+def _outbound_payload(
+    item: Item,
+    cf_product_line: str | None = None,
+) -> dict[str, Any]:
+    """Build the PATCH body from the writable allowlist (never vendor).
+
+    Always includes the scalar allowlist (name/description/unit). When
+    ``cf_product_line`` is not ``None`` it is added under ``custom_fields`` —
+    an empty string clears the Zoho field, a non-empty string sets the option.
+    No other custom field and no raw ``customfield_id`` is ever included.
+    """
+    payload: dict[str, Any] = {
         "name": item.name,
         "description": item.description or "",
         "unit": item.unit,
     }
+    if cf_product_line is not None:
+        payload["custom_fields"] = {CF_PRODUCT_LINE: cf_product_line}
+    return payload
 
 
 def push_item_update(
     session: Session,
     item: Item,
     *,
+    cf_product_line: str | None = None,
     client: httpx.Client | None = None,
 ) -> ItemPushResult:
     """Push an owner's item edit to Zoho via the integration service.
+
+    ``cf_product_line`` (optional): when not ``None`` the Zoho dropdown custom
+    field is written too (``""`` clears it). The value must already be validated
+    by the caller against the live metadata options; the service re-validates and
+    rejects unknown values. It is never persisted locally (the extended Zoho item
+    detail is the source of truth), so a failed custom-field push is not replayed
+    by the generic retry path — see the module docstring.
 
     Always records ``zoho_push_attempted_at`` and never raises:
 
@@ -274,7 +314,7 @@ def push_item_update(
         )
         return ItemPushResult(PUSH_PENDING)
 
-    payload = _outbound_payload(item)
+    payload = _outbound_payload(item, cf_product_line=cf_product_line)
     try:
         body = _patch_item(item.zoho_item_id, payload, client=client)
     except ItemSyncError as exc:
