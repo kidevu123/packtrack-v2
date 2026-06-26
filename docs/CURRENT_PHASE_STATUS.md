@@ -1,5 +1,48 @@
 # Current Phase Status
 
+## v2.7.2 — Stabilization: deterministic OIDC test + safe canary marker (feature branch, NOT deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/stabilization-v2.7.2` (off `origin/main` @ `4aaecfc` — separate worktree so v2.8.0 WIP in the main repo is not touched) |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production. |
+| **Status** | Code complete; tests green (255 passed; +7 over v2.7.1's 248); **not merged, not deployed, not tagged**. |
+
+**v2.7.2 scope** (two small safety/stability items):
+
+* **Deterministic OIDC tamper test.** `tests/test_oidc_state.py::test_signer_tampered_raises_generic_badsignature_not_expired` was flaky (~1-in-5) because flipping only the trailing base64 character of an HMAC signature doesn't always change the decoded bytes (the trailing 4-bit padding can decode the same way). Fixed by replacing the entire signature segment with a fixed-length all-`A`s value (decodes to zero bytes) and also by running 5 distinct variant strings through a loop so a future `itsdangerous` release that accidentally validates one of them surfaces immediately rather than as a flake. Verified 0 failures in 50 consecutive runs locally. **Production auth behavior is unchanged** — this is a test-only fix.
+
+* **OWNER-only `POST /receive/v2/{id}/mark-test` route.** Safe audit marker for canary/test receives. **Does NOT delete any PT row, does NOT call Zoho/Luma**. Requires:
+  * OWNER role (RECEIVING/DESIGN → 403).
+  * Form `confirm` field exactly equals `"I UNDERSTAND ZOHO AND LUMA ARE NOT REVERSED"` (impossible to fire by accident).
+  * Optional `reason` field is appended to the POEvent + the receive's notes for audit.
+  * Emits `POEvent(kind="receive_marked_test")` with operator name, ISO timestamp, and reason.
+  * Appends a marker line to `Receive.notes` (operator-visible on `/receive/v2/{id}` and `/receive/v2/{id}/review`).
+  * Re-renders the result page with a prominent amber **"Test / canary receive — external Zoho and Luma records were NOT reversed"** banner.
+  * UI: when an OWNER views the result page of a non-test-marked receive, a collapsed `<details>` form lets them mark it with one click. Banner replaces the form once marked.
+* **Result template hardened** so it tolerates `outcome=None` (the mark-test path doesn't re-run push). The retry-push path also passes the banner flag so the warning persists across re-renders.
+
+**Tests:** 7 new cases in `tests/test_v2_7_2_mark_test.py` + 1 updated case in `tests/test_oidc_state.py`. Full suite **255 passed** (was 248). `ruff check .` clean. Legacy `/receive/{zoho_po_id}` regression test passes.
+
+**Operator note — how to mark Receive id=1 (the v2.6.1 canary):**
+After v2.7.2 deploys, an OWNER can mark the canary as test by either:
+
+1. **UI**: visit `/receive/v2/1`, click into the result page, expand "Mark this receive as test / canary", check the confirmation box, click "Mark as test / canary".
+2. **CLI** (canonical equivalent):
+   ```bash
+   # From a workstation logged in as OWNER (cookie in $COOKIE):
+   curl -X POST 'https://packtrack.booute.duckdns.org/receive/v2/1/mark-test' \
+        -b "packtrack_session=$COOKIE" \
+        -F 'confirm=I UNDERSTAND ZOHO AND LUMA ARE NOT REVERSED' \
+        -F 'reason=vNext Stage 2 canary; Zoho PR-00583 + Luma lot 995751ce intentionally left in place'
+   ```
+3. The receive's `notes` will then carry the marker line; a `receive_marked_test` POEvent will be visible on PO-00250's audit log; the result page will show the amber banner.
+
+The action is purely PT-side. **Zoho PR-00583 and Luma lot `995751ce-…` remain in their respective systems unchanged** (which is the right call per `docs/RECEIVING_VNEXT_CANARY_CLEANUP.md` — a 1-unit footprint on a 3600-unit PO line is operationally invisible).
+
+---
+
 ## v2.7.1 — Receiving vNext polish: Zoho notes + Start Receive entry (deployed + tagged)
 
 | | |

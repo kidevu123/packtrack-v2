@@ -31,6 +31,7 @@ from packtrack.models import (
     Attachment,
     BoxReceipt,
     Item,
+    POEvent,
     POLine,
     PurchaseOrder,
     Receive,
@@ -676,5 +677,129 @@ def retry_push(
             "po": po,
             "outcome": outcome,
             "boxes": boxes,
+            "marked_test_banner": (rec.notes or "").find("[Marked as TEST/CANARY") != -1,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Mark-as-test — owner-only audit marker (v2.7.2)
+# ---------------------------------------------------------------------------
+#
+# This is NOT a reversal. External systems (Zoho, Luma) keep whatever they
+# already recorded; the integration service has no reversal API exposed
+# from PackTrack and Luma's lot reversal is not in the public contract.
+# The marker only labels the PT-side Receive so it stops appearing as a
+# normal operational receive in audit reports and result-page renders.
+#
+# Hard guarantees:
+#   * No PT row is deleted (Receive, ReceiveCase, ReceiveCaseLine,
+#     BoxReceipt, POEvent all remain intact and queryable).
+#   * No external Zoho/Luma call is made.
+#   * A POEvent records who marked it, when, and any operator-supplied
+#     reason so the audit trail is honest.
+#
+# Designed for canary / sandbox / accidental receives where the operator
+# wants the PT-side audit log to show "this was a test" without erasing
+# any history.
+
+
+MARK_TEST_CONFIRMATION_STRING = "I UNDERSTAND ZOHO AND LUMA ARE NOT REVERSED"
+"""Required exact match in the ``confirm`` form field. The verbose
+phrasing makes an accidental click impossible and makes the audit trail
+self-documenting."""
+
+
+@router.post("/{receive_id}/mark-test", response_class=HTMLResponse)
+def mark_receive_as_test(
+    request: Request,
+    receive_id: int,
+    confirm: str = Form(""),
+    reason: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Mark a vNext Receive as a test/canary so it stops being treated as
+    a normal operational receive in audit views. OWNER-only.
+
+    Requires:
+      * The user has OWNER role.
+      * Form field ``confirm`` exactly equals
+        :data:`MARK_TEST_CONFIRMATION_STRING` (so an accidental POST
+        cannot mark a real receive).
+      * Optional ``reason`` is recorded verbatim in the POEvent message
+        and appended to ``Receive.notes``.
+
+    Does NOT:
+      * delete any row in any table
+      * call ``submit_zoho_receives`` / ``push_luma_receipt`` / any
+        external API
+      * change ``BoxReceipt`` rows or ``luma_push_status``
+      * void/reverse anything on Zoho or Luma
+
+    See ``docs/RECEIVING_VNEXT_CANARY_CLEANUP.md`` for the operational
+    context behind this marker.
+    """
+    if user.role != Role.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only OWNER may mark a receive as test/canary.",
+        )
+
+    if (confirm or "").strip() != MARK_TEST_CONFIRMATION_STRING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Confirmation string mismatch. To mark this receive as "
+                f"test, submit confirm = {MARK_TEST_CONFIRMATION_STRING!r}. "
+                "External Zoho/Luma records are NOT reversed by this action."
+            ),
+        )
+
+    rec = _load_receive(session, receive_id)
+    now = datetime.utcnow()
+    cleaned_reason = (reason or "").strip()
+    marker_line = (
+        f"[Marked as TEST/CANARY by {user.name or user.email} at "
+        f"{now.isoformat(timespec='seconds')}Z]"
+        + (f" — {cleaned_reason}" if cleaned_reason else "")
+        + " (External Zoho/Luma records were NOT reversed.)"
+    )
+    rec.notes = ((rec.notes or "").rstrip() + "\n\n" + marker_line).lstrip()
+    rec.updated_at = now
+    session.add(rec)
+    if rec.purchase_order_id is not None:
+        session.add(POEvent(
+            po_id=rec.purchase_order_id,
+            kind="receive_marked_test",
+            message=(
+                f"Receive {rec.receive_number} marked as TEST/CANARY by "
+                f"{user.name or user.email}"
+                + (f": {cleaned_reason}" if cleaned_reason else "")
+                + " — external Zoho/Luma records were NOT reversed."
+            ),
+            actor_id=user.id,
+        ))
+    session.commit()
+    session.refresh(rec)
+
+    # Re-render the result page so the operator immediately sees the
+    # new banner. No push outcome rerun.
+    po = session.get(PurchaseOrder, rec.purchase_order_id) if rec.purchase_order_id else None
+    from sqlmodel import select as _select
+    boxes = session.exec(
+        _select(BoxReceipt).where(BoxReceipt.receive_id == rec.id)
+    ).all()
+    return _render(
+        request,
+        "receive_v2/result.html",
+        {
+            "user": user,
+            "receive": rec,
+            "po": po,
+            "outcome": None,  # no push happened in this action
+            "boxes": boxes,
+            "marked_test_banner": True,
         },
     )
