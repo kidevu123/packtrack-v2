@@ -1,14 +1,23 @@
 # Current Phase Status
 
-## v2.7.1 — Receiving vNext polish: Zoho notes + Start Receive entry (feature branch, NOT deployed)
+## v2.7.1 — Receiving vNext polish: Zoho notes + Start Receive entry (deployed + tagged)
 
 | | |
 |---|---|
-| **Branch** | `feature/receiving-vnext-v2.7.1-polish` (off PR #5's `b87ff20`) |
-| **Base** | v2.7.0 (cf_product_line edit) which is **deployed but not merged via PR #5 yet**. |
+| **Tag** | `v2.7.1` (annotated `ba3836df…`) at commit `d8ed5fc` — pushed to origin. |
+| **Tag message** | "PackTrack v2.7.1 — Receiving vNext polish (Zoho notes + Start Receive UI)" |
+| **Production version** | `2.7.1` (per `/healthz` after deploy at 2026-06-26 16:32 UTC) |
+| **Merged via** | PR [#6](https://github.com/kidevu123/packtrack-v2/pull/6) (squash) into `feature/inventory-cf-product-line-edit-v2.7.0` — stacked on PR #5 because v2.7.0 was deployed-but-not-merged. |
 | **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
-| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production (canary verified on 2026-06-26). |
-| **Status** | Code complete; tests green (248 passed); **not merged, not deployed, not tagged**. |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED=true` in production (kept ON post-canary). |
+| **Sequencing note** | `main` is still at `2.6.1` (`42912e4`). PR #5 (v2.7.0) and PR #6 (v2.7.1) are stacked on a feature branch and deployed directly from there. When PR #5 merges to main, this v2.7.1 work will already be on top of it; tag stays anchored at `d8ed5fc`. |
+
+**Deploy verification (post-PR-#6 deploy at 2026-06-26 16:32 UTC):**
+* `/healthz` → `{"ok":true,"version":"2.7.1","db":"ok","gateway_configured":true,"zoho_integration_configured":true,...}`
+* Production Alembic current/head = `e1f2a3b4c5d7`.
+* Smoke (8/8) passed.
+* `RECEIVING_VNEXT_ENABLED=true` in env + uvicorn process env.
+* Journal clean since deploy.
 
 **v2.7.1 scope** (small, focused polish on Stage 2):
 * **Zoho receive notes are now human-readable.** New helper `services/receiving_v2_finalize.build_zoho_receive_notes(session, receive, box_receipts)` composes a clean, multi-line description: `"Received via PackTrack" / Receive: R-… / PO: PO-… / Case: … / Operator: … / Items (N): - name: qty unit"`. Operator-supplied `Receive.notes` is appended verbatim under a `Notes:` section. Capped at ~1800 chars so the upstream service's `[zoho-integration]` trace + `[truncated]` marker still fit under Zoho's ~2000-char limit.
