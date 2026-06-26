@@ -7,10 +7,10 @@
 | **Tag** | `v2.7.1` (annotated `ba3836df…`) at commit `d8ed5fc` — pushed to origin. |
 | **Tag message** | "PackTrack v2.7.1 — Receiving vNext polish (Zoho notes + Start Receive UI)" |
 | **Production version** | `2.7.1` (per `/healthz` after deploy at 2026-06-26 16:32 UTC) |
-| **Merged via** | PR [#6](https://github.com/kidevu123/packtrack-v2/pull/6) (squash) into `feature/inventory-cf-product-line-edit-v2.7.0` — stacked on PR #5 because v2.7.0 was deployed-but-not-merged. |
+| **Merged via** | PR [#6](https://github.com/kidevu123/packtrack-v2/pull/6) (squash) into PR #5's branch as `d8ed5fc`, then PR [#5](https://github.com/kidevu123/packtrack-v2/pull/5) merged into `main` with a **true merge commit** `e47828e` on 2026-06-26 17:35 UTC. The merge-commit method (not squash) was chosen specifically to keep `d8ed5fc` reachable from `main` so the `v2.7.1` tag stays meaningful. |
 | **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
 | **Feature flag** | `RECEIVING_VNEXT_ENABLED=true` in production (kept ON post-canary). |
-| **Sequencing note** | `main` is still at `2.6.1` (`42912e4`). PR #5 (v2.7.0) and PR #6 (v2.7.1) are stacked on a feature branch and deployed directly from there. When PR #5 merges to main, this v2.7.1 work will already be on top of it; tag stays anchored at `d8ed5fc`. |
+| **Main reconciled (2026-06-26)** | `main` at `e47828e`. Contains `d8ed5fc` (v2.7.1 ship), `42912e4` (v2.6.1 canary docs), and the reconciliation merge chain (`79d51bf` + `e47828e`). The deleted-after-merge feature branch was `feature/inventory-cf-product-line-edit-v2.7.0`. No deploy was triggered by the reconciliation (production already runs `d8ed5fc` byte-for-byte; only docs differ). |
 
 **Deploy verification (post-PR-#6 deploy at 2026-06-26 16:32 UTC):**
 * `/healthz` → `{"ok":true,"version":"2.7.1","db":"ok","gateway_configured":true,"zoho_integration_configured":true,...}`
