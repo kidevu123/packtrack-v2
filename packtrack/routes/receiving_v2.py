@@ -18,9 +18,11 @@ Stage 2 (v2.6.0).
 """
 from __future__ import annotations
 
+import shutil
+import uuid
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlmodel import Session
 
@@ -29,6 +31,7 @@ from packtrack.db import get_session
 from packtrack.deps import require_user
 from packtrack.models import (
     Attachment,
+    AttachmentKind,
     BoxReceipt,
     Item,
     POEvent,
@@ -802,4 +805,135 @@ def mark_receive_as_test(
             "boxes": boxes,
             "marked_test_banner": True,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Packing-list attachment (v2.7.3)
+# ---------------------------------------------------------------------------
+#
+# Stage 1 already added ``AttachmentKind.PACKING_LIST`` and the
+# ``Receive.packing_list_attachment_id`` FK column. v2.7.3 wires the
+# upload/display path:
+#
+#   * one primary packing list per Receive (v1)
+#   * stored as a regular ``Attachment`` row with kind=PACKING_LIST,
+#     using the same on-disk layout as other attachments (UPLOAD_DIR /
+#     kind / safe_name)
+#   * the new file is linked from the receive via
+#     ``Receive.packing_list_attachment_id``
+#   * uploading when one is already attached REPLACES the pointer
+#     (the prior Attachment row is kept on disk + in DB — no deletion,
+#     so audit history is preserved)
+#
+# No parsing. No structured rows. No expected-vs-actual yet.
+
+
+_ALLOWED_PACKING_LIST_EXT = {
+    "pdf", "csv", "xls", "xlsx", "jpg", "jpeg", "png", "webp", "heic",
+}
+
+
+def _save_packing_list_upload(
+    file: UploadFile, po_number: str,
+) -> tuple[str, str]:
+    """Persist a packing-list upload to UPLOAD_DIR/packing_list and return
+    ``(safe_name, relative_path)``. Mirrors the existing
+    ``_save_upload`` pattern in purchase_orders.py but with the
+    packing-list extension allowlist and its own subfolder."""
+    if not file.filename or "." not in file.filename:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    ext = file.filename.rsplit(".", 1)[1].lower()
+    if ext not in _ALLOWED_PACKING_LIST_EXT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Allowed packing-list types: {', '.join(sorted(_ALLOWED_PACKING_LIST_EXT))}",
+        )
+    safe_po = (po_number or "RCV").replace("/", "_")[:40]
+    safe_name = f"{safe_po}_PL_{uuid.uuid4().hex[:10]}.{ext}"
+    target_dir = settings.UPLOAD_DIR / AttachmentKind.PACKING_LIST.value
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+    with target_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return safe_name, str(target_path.relative_to(settings.UPLOAD_DIR))
+
+
+@router.post("/{receive_id}/packing-list", response_class=HTMLResponse)
+def upload_receive_packing_list(
+    request: Request,
+    receive_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Upload or REPLACE the primary packing list for a Receive.
+
+    Permissions: OWNER + RECEIVING (same as the rest of the vNext
+    receive-edit surface). Flag-gated.
+
+    Stores the upload as an ``Attachment(kind=PACKING_LIST)`` linked
+    to the receive's PO, then sets
+    ``Receive.packing_list_attachment_id`` to the new attachment's id.
+    Previous packing-list attachments are NOT deleted; the pointer
+    swap is the only mutation needed and the old file stays on disk
+    + in the audit table.
+
+    Does NOT:
+      * call Zoho or Luma
+      * change Receive.status or trigger finalize
+      * create or mutate any BoxReceipt
+      * parse the file
+    """
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if rec.purchase_order_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Receive has no PO — packing-list attachment requires a PO.",
+        )
+    po = session.get(PurchaseOrder, rec.purchase_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="PO not found")
+
+    _safe_name, rel = _save_packing_list_upload(file, po.po_number)
+
+    # next version: 1 + max version among PACKING_LIST attachments on
+    # this PO (so a replace shows as version 2, 3, etc. in audit).
+    from sqlmodel import select as _select
+    existing = session.exec(
+        _select(Attachment)
+        .where(Attachment.po_id == po.id, Attachment.kind == AttachmentKind.PACKING_LIST)
+    ).all()
+    version = (max((a.version for a in existing), default=0)) + 1
+
+    att = Attachment(
+        po_id=po.id, kind=AttachmentKind.PACKING_LIST, version=version,
+        filename=file.filename, file_path=rel, source="web",
+        uploaded_by_id=user.id,
+        notes=f"Packing list for Receive {rec.receive_number}",
+    )
+    session.add(att)
+    session.flush()  # need att.id before pointing the receive at it
+    rec.packing_list_attachment_id = att.id
+    rec.updated_at = datetime.utcnow()
+    session.add(rec)
+    if rec.purchase_order_id is not None:
+        session.add(POEvent(
+            po_id=rec.purchase_order_id,
+            kind="receive_packing_list_uploaded",
+            message=(
+                f"Packing list v{version} attached to Receive {rec.receive_number}: "
+                f"{file.filename}"
+            ),
+            actor_id=user.id,
+        ))
+    session.commit()
+
+    # Redirect back to the receive page so the operator sees the
+    # attached state immediately.
+    return RedirectResponse(
+        url=f"/receive/v2/{rec.id}",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
