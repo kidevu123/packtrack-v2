@@ -1,6 +1,51 @@
 # Current Phase Status
 
+## v2.7.1 — Receiving vNext polish: Zoho notes + Start Receive entry (deployed + tagged)
+
+| | |
+|---|---|
+| **Tag** | `v2.7.1` (annotated `ba3836df…`) at commit `d8ed5fc` — pushed to origin. |
+| **Tag message** | "PackTrack v2.7.1 — Receiving vNext polish (Zoho notes + Start Receive UI)" |
+| **Production version** | `2.7.1` (per `/healthz` after deploy at 2026-06-26 16:32 UTC) |
+| **Merged via** | PR [#6](https://github.com/kidevu123/packtrack-v2/pull/6) (squash) into `feature/inventory-cf-product-line-edit-v2.7.0` — stacked on PR #5 because v2.7.0 was deployed-but-not-merged. |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema change) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED=true` in production (kept ON post-canary). |
+| **Sequencing note** | `main` is still at `2.6.1` (`42912e4`). PR #5 (v2.7.0) and PR #6 (v2.7.1) are stacked on a feature branch and deployed directly from there. When PR #5 merges to main, this v2.7.1 work will already be on top of it; tag stays anchored at `d8ed5fc`. |
+
+**Deploy verification (post-PR-#6 deploy at 2026-06-26 16:32 UTC):**
+* `/healthz` → `{"ok":true,"version":"2.7.1","db":"ok","gateway_configured":true,"zoho_integration_configured":true,...}`
+* Production Alembic current/head = `e1f2a3b4c5d7`.
+* Smoke (8/8) passed.
+* `RECEIVING_VNEXT_ENABLED=true` in env + uvicorn process env.
+* Journal clean since deploy.
+
+**v2.7.1 scope** (small, focused polish on Stage 2):
+* **Zoho receive notes are now human-readable.** New helper `services/receiving_v2_finalize.build_zoho_receive_notes(session, receive, box_receipts)` composes a clean, multi-line description: `"Received via PackTrack" / Receive: R-… / PO: PO-… / Case: … / Operator: … / Items (N): - name: qty unit"`. Operator-supplied `Receive.notes` is appended verbatim under a `Notes:` section. Capped at ~1800 chars so the upstream service's `[zoho-integration]` trace + `[truncated]` marker still fit under Zoho's ~2000-char limit.
+* **PackTrack DOES NOT duplicate the upstream trace.** The integration service (`zoho-integration-service/app/writes/inventory_write_adapters.py::_compose_note_field` at v1.22.0+) is the sole source of the `[zoho-integration] pack_track_receipt_id=…;pack_track_operator_id=…;pack_track_workflow_session_id=…` line. PackTrack notes are operator-facing prose only — `pack_track_*` IDs and `[zoho-integration]` prefixes are explicitly forbidden via test (`test_build_zoho_receive_notes_does_not_duplicate_machine_metadata`).
+* **"Start receive" UI entry point** on `/receive`. When `RECEIVING_VNEXT_ENABLED=true` AND the Zoho mirror is linked to a PackTrack PurchaseOrder AND the PO is not fully received, each card now shows a primary "Start receive" button pointing to `GET /receive/v2/new?po_id=<internal_po_id>` (the non-mutating start page from Stage 1). Legacy whole-card link to `/receive/{zoho_po_id}` is preserved; layout is otherwise unchanged.
+* **No schema change. No Zoho/Luma payload shape change** (only the `notes` field's contents). `submit_zoho_receives` and `push_luma_receipt` are not modified.
+* **Canary cleanup is documented but NOT executed.** See [`docs/RECEIVING_VNEXT_CANARY_CLEANUP.md`](./RECEIVING_VNEXT_CANARY_CLEANUP.md) for the audit + reversal-path proposal. The canary `Receive id=1` / `BoxReceipt id=139` / Zoho `PR-00583` / Luma lot `995751ce-…` remain in place; recommendation: leave Zoho + Luma untouched (a 1-unit footprint on a 3600-unit PO line is operationally invisible) and annotate Receive 1 in PT only.
+
+**Tests:** 9 new cases in `tests/test_v2_6_2_polish.py`; full suite **248 passed** (was 239 on the v2.7.0 base; +9 new). Ruff clean.
+
+---
+
 ## v2.6.1 — Receiving vNext Stage 2 canary PASSED + tagged (2026-06-26)
+
+| | |
+|---|---|
+| **Tag** | `v2.6.1` (annotated `cfdc2d81…`) at commit `7ce0af6` — pushed to origin. |
+| **Canary** | PASSED — real receive `R-2026-0001` against PO-00250 finalized + pushed live; Zoho `committed`, Luma `pushed`, BoxReceipt id `139`. |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` kept ON in `/etc/packtrack/packtrack.env`. |
+| **Alembic head** | `e1f2a3b4c5d7`. |
+
+(Full canary evidence is on `main` at commit `42912e4`. This branch was cut from PR #5's `b87ff20` before that docs commit landed on origin/main; the canary success record is unchanged regardless.)
+
+---
+
+## v2.6.x — Ship-state (2026-06-26): deployed, **pending Stage-2 canary**, NOT tagged
+
+> Historical entry — superseded by the ## v2.6.1 canary success section above (which has the same data plus tag/POEvent IDs). Kept here for the pre-canary deploy timeline.
 
 | | |
 |---|---|

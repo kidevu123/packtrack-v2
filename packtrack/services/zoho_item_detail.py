@@ -276,6 +276,29 @@ def build_custom_field_rows(
     return rows
 
 
+CF_PRODUCT_LINE = "cf_product_line"
+
+
+def product_line_options(*, client: httpx.Client | None = None) -> list[str] | None:
+    """Live, valid option names for the Zoho ``cf_product_line`` dropdown.
+
+    Returns the ordered list of option *names* (e.g. ``["7OH", "MIT A",
+    "MIT B"]``) from cached metadata, ``[]`` when metadata is reachable but the
+    field/options aren't defined, or ``None`` when metadata is unavailable (so
+    callers can fall back to read-only and avoid posting an unvalidated value).
+
+    This is the authoritative server-side allowlist used to validate an owner's
+    ``cf_product_line`` edit before it is sent to the integration service.
+    """
+    metadata = fetch_metadata(client=client)
+    if metadata is None:
+        return None
+    for defn in _custom_field_defs(metadata):
+        if defn.get("api_name") == CF_PRODUCT_LINE:
+            return _option_names(defn)
+    return []
+
+
 def _metadata_warnings(metadata: dict[str, Any] | None) -> list[str]:
     out: list[str] = []
     if not isinstance(metadata, dict):

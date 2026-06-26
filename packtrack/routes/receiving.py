@@ -91,7 +91,10 @@ def receiving_list(
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "receiving_list.html",
-        {"user": user, "mirrors": mirrors, "linked": linked},
+        {
+            "user": user, "mirrors": mirrors, "linked": linked,
+            "vnext_enabled": settings.RECEIVING_VNEXT_ENABLED,
+        },
     )
 
 

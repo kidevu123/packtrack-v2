@@ -263,6 +263,90 @@ def test_configured_when_all_three_settings_present(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# cf_product_line custom-field write (v2.7.0)
+# ---------------------------------------------------------------------------
+
+
+def test_cf_product_line_included_in_payload_and_synced(session, monkeypatch):
+    _configure(monkeypatch)
+    it = _item(session, name="Keep", description="Keep", unit="ea")
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"item": {"name": "Keep",
+                                                  "description": "Keep", "unit": "ea"}})
+
+    result = zis.push_item_update(
+        session, it, cf_product_line="MIT A", client=_client(handler)
+    )
+    assert result.status == "synced"
+    # Scalar allowlist plus exactly one custom field, by api_name + option name.
+    assert captured["body"]["custom_fields"] == {"cf_product_line": "MIT A"}
+    assert set(captured["body"].keys()) == {"name", "description", "unit", "custom_fields"}
+    # No raw customfield id, no other custom field, no vendor.
+    blob = json.dumps(captured["body"])
+    assert "customfield_id" not in blob
+    assert "vendor" not in blob
+
+
+def test_cf_product_line_empty_string_clears(session, monkeypatch):
+    _configure(monkeypatch)
+    it = _item(session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"item": {"name": it.name}})
+
+    captured = {}
+    zis.push_item_update(session, it, cf_product_line="", client=_client(handler))
+    assert captured["body"]["custom_fields"] == {"cf_product_line": ""}
+
+
+def test_cf_product_line_not_sent_when_none(session, monkeypatch):
+    _configure(monkeypatch)
+    it = _item(session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"item": {"name": it.name}})
+
+    captured = {}
+    zis.push_item_update(session, it, client=_client(handler))  # cf_product_line=None
+    assert "custom_fields" not in captured["body"]
+
+
+def test_cf_product_line_failure_marks_failed_keeps_local(session, monkeypatch):
+    _configure(monkeypatch)
+    it = _item(session, name="Edited Name")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "INVALID_CUSTOM_FIELD_VALUE",
+                                         "detail": "nope"})
+
+    result = zis.push_item_update(
+        session, it, cf_product_line="MIT A", client=_client(handler)
+    )
+    assert result.status == "failed"
+    session.refresh(it)
+    assert it.zoho_push_status == "failed"
+    assert "INVALID_CUSTOM_FIELD_VALUE" in (it.zoho_push_error or "")
+    assert it.name == "Edited Name"  # local scalar edit not rolled back
+
+
+def test_outbound_payload_cf_only_added_when_provided():
+    it = Item(name="X", unit="ea", description="d")
+    assert "custom_fields" not in zis._outbound_payload(it)
+    assert zis._outbound_payload(it, cf_product_line="MIT B")["custom_fields"] == {
+        "cf_product_line": "MIT B"
+    }
+    # Empty string is a real (clearing) value, not "omit".
+    assert zis._outbound_payload(it, cf_product_line="")["custom_fields"] == {
+        "cf_product_line": ""
+    }
+
+
+# ---------------------------------------------------------------------------
 # Boundary: no direct Zoho API / OAuth code in the item-sync module
 # ---------------------------------------------------------------------------
 
