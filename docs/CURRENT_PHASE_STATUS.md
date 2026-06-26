@@ -1,5 +1,24 @@
 # Current Phase Status
 
+## v2.6.x — Ship-state (2026-06-26): deployed, **pending Stage-2 canary**, NOT tagged
+
+| | |
+|---|---|
+| **Production version** | `2.6.1` (per `/healthz`) |
+| **Deploy commit** | `7ce0af6` (PR #4 merge — *richer inventory item detail*) |
+| **v2.6.0 commit** | `f2d7f63` (PR #3 squash — *Receiving vNext Stage 2*). Deployed first, then superseded by the `2.6.1` deploy. |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged across both releases — neither PR added a migration). |
+| **Tags** | **None yet for the v2.6.x line.** Per decision (2026-06-26): `v2.6.0` will be **skipped entirely**; a single `v2.6.1` tag will be created at `7ce0af6` once the Stage-2 canary passes. |
+| **`RECEIVING_VNEXT_ENABLED`** | **Unset** in `/etc/packtrack/packtrack.env` → Python default `False` in effect. Stage 2 routes (`/receive/v2/{id}/review`, `/finalize`, `/retry-push`) return 404 to operators. Legacy `/receive/{zoho_po_id}` remains the only operator-visible receive flow. |
+| **Stage 2 canary** | **Pending.** Runbook: [`docs/RUNBOOK_RECEIVING_VNEXT_CANARY.md`](./RUNBOOK_RECEIVING_VNEXT_CANARY.md). |
+| **PR #4 (item detail)** | Operator-visible, no flag — read-only and degrades gracefully when the upstream service is unavailable. No canary required for it. |
+
+**Deploy verification (post-PR-#3 deploy, then post-PR-#4 deploy):**
+* `/healthz` → `{"ok":true,"version":"2.6.1","db":"ok",...}`
+* Production Alembic current/head = `e1f2a3b4c5d7` (Stage 1's `receive_vnext_stage1`).
+* Smoke (8/8) passed both deploys.
+* `RECEIVING_VNEXT_ENABLED` not in process env → flag default OFF holds.
+
 ## v2.6.1 — Richer inventory item detail (read-only Zoho metadata)
 
 | | |
@@ -41,14 +60,14 @@ v1.31.0 Phase A endpoints. PackTrack still **never calls Zoho directly**.
   `name`/`description`/`unit`.
 * **No schema change** — display-only; Alembic head unchanged.
 
-## v2.6.0 — Receiving vNext Stage 2 (feature branch, NOT deployed)
+## v2.6.0 — Receiving vNext Stage 2 (merged + deployed, pending canary)
 
 | | |
 |---|---|
-| **Branch** | `feature/receiving-vnext-stage2-finalize` (off `main` @ `fc2e4cc`) |
+| **Merge commit** | `f2d7f63` — PR [#3](https://github.com/kidevu123/packtrack-v2/pull/3) (squash) merged 2026-06-25. Branch `feature/receiving-vnext-stage2-finalize` retained on origin. |
 | **Alembic head** | `e1f2a3b4c5d7` (`receive_vnext_stage1`) — **no new migration** in Stage 2; the two new `box_receipts` FK columns were already added in Stage 1. |
-| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — still default **OFF** in production. Stage 2 routes (`/receive/v2/{id}/review`, `/finalize`, `/retry-push`) 404 unless flag is on. Legacy `/receive/{zoho_po_id}` remains the only operator-visible receive flow. |
-| **Status** | Code complete on feature branch; not merged, not deployed, not tagged. Tests green (185 passed). |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` — default **OFF** in production. Stage 2 routes (`/receive/v2/{id}/review`, `/finalize`, `/retry-push`) 404 unless flag is on. Legacy `/receive/{zoho_po_id}` remains the only operator-visible receive flow. |
+| **Status** | Deployed, **NOT tagged**. Per decision (2026-06-26): skip the `v2.6.0` tag entirely; tag `v2.6.1` at `7ce0af6` after canary. Tests: 208 passed at merge; 222 passed on current main with PR #4 layered on. |
 
 **v2.6.0 Stage 2 scope** (per `docs/design/2026-06-25-receiving-vnext.md` § 3.2 steps 11–15 + § 5.1):
 * **Python model surfacing** — declare `BoxReceipt.receive_id` and `BoxReceipt.receive_case_line_id` on the SQLModel class. Legacy paths still leave both NULL; only Stage 2 finalize populates them. **No migration** — the columns shipped with Stage 1.
