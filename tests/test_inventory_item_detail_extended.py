@@ -47,12 +47,12 @@ _METADATA = {
             {
                 "api_name": "cf_item_type", "label": "Item Type",
                 "field_type": "string", "is_dropdown": False,
-                "has_options": False, "options": None,
+                "has_options": False, "options": None, "policy": "writable",
             },
             {
                 "api_name": "cf_product_line", "label": "Product Line",
                 "field_type": "dropdown", "is_dropdown": True,
-                "has_options": True,
+                "has_options": True, "policy": "writable",
                 "options": [
                     {"value_id": "1", "name": "7OH", "is_active": True},
                     {"value_id": "2", "name": "MIT A", "is_active": True},
@@ -62,9 +62,13 @@ _METADATA = {
             {
                 "api_name": "cf_description", "label": "Description",
                 "field_type": "multiline", "is_dropdown": False,
+                "policy": "writable",
             },
         ],
-        "categories": [],
+        "categories": [
+            {"category_id": "c1", "name": "Packaging", "parent_category_id": "-1", "depth": 0},
+            {"category_id": "c2", "name": "Master Case", "parent_category_id": "c1", "depth": 1},
+        ],
         "reporting_tags": [],
         "units": None,
         "field_policy": {"name": "writable", "selling_price": "read_only"},
@@ -177,6 +181,8 @@ def _full_extended() -> ExtendedItemDetail:
         item=_ITEM,
         custom_fields=build_custom_field_rows(_ITEM, _METADATA),
         warnings=["Zoho metadata: “units” unavailable"],
+        categories=_METADATA["metadata"]["categories"],
+        field_policy=_METADATA["metadata"]["field_policy"],
     )
 
 
@@ -233,8 +239,11 @@ def test_detail_still_renders_when_extended_fails(session, engine, monkeypatch):
     body = r.text
     # Local page still renders, with a small operator note (not a hard error).
     assert "Zoho extended details unavailable." in body
-    assert "Edit item" in body  # local edit form unaffected
-    assert "Primary details" not in body  # no extended section when unavailable
+    # The local-owned fields (name/unit/description) stay editable...
+    assert 'name="name"' in body
+    assert "Save changes" in body
+    # ...but the Zoho-only accounting section is absent when the fetch failed.
+    assert "Zoho accounting &amp; inventory" not in body
 
 
 def test_packtrack_product_line_not_overwritten_by_zoho_cf(session, engine, monkeypatch):
@@ -253,28 +262,24 @@ def test_packtrack_product_line_not_overwritten_by_zoho_cf(session, engine, monk
 
 
 def test_readonly_and_unknown_fields_cannot_mutate_item(session, engine, monkeypatch):
-    """Posting accounting / custom-field keys must not change the item — the
-    update route only accepts name/description/unit + PackTrack-owned fields."""
+    """Posting read-only / unknown keys must not change the item or trigger a
+    push. With the hidden ``__orig`` fields matching, nothing is detected as
+    changed, so read-only keys (price, stock, valuation) are simply ignored."""
     it = _seed(session, Role.OWNER)
     client = _client(session, engine, monkeypatch, Role.OWNER)
     r = client.post(
         f"/inventory/{it.id}",
         data={
-            "name": it.name,
-            "description": "",
+            # Editable fields posted unchanged (value == hidden original).
+            "name": it.name, "name__orig": it.name,
+            "unit": it.unit, "unit__orig": it.unit,
+            "description": "", "description__orig": "",
             "material_code": it.material_code,
-            "unit": it.unit,
-            "daily_usage_rate": "0",
-            "reorder_point": "10",
-            "critical_point": "5",
-            "sea_lead_days": "0",
-            "express_lead_days": "0",
-            # Attempted read-only / custom-field writes — all must be ignored.
-            "selling_price": "999",
-            "cost_price": "999",
-            "cf_product_line": "MIT A",
-            "valuation_method": "lifo",
-            "current_stock": "9999",
+            "daily_usage_rate": "0", "reorder_point": "10",
+            "critical_point": "5", "sea_lead_days": "0", "express_lead_days": "0",
+            # Attempted read-only / unknown writes — all must be ignored.
+            "selling_price": "999", "cost_price": "999",
+            "valuation_method": "lifo", "current_stock": "9999",
         },
         follow_redirects=False,
     )
@@ -282,8 +287,8 @@ def test_readonly_and_unknown_fields_cannot_mutate_item(session, engine, monkeyp
     session.expire_all()
     fresh = session.get(Item, it.id)
     assert fresh.current_stock == 42.0  # stock never editable
-    assert fresh.product_line == "FIX"  # not touched by cf_product_line
-    # No Zoho-owned field changed → no pending push created.
+    assert fresh.product_line == "FIX"  # untouched
+    # Nothing changed → no service call → no pending/failed push created.
     assert fresh.zoho_push_status is None
 
 
@@ -395,10 +400,10 @@ def test_no_direct_zoho_calls_in_detail_client():
     assert "ZOHO_INTEGRATION_BASE_URL" in src
 
 
-def test_outbound_patch_payload_has_no_custom_fields():
-    from packtrack.services.zoho_item_sync import _outbound_payload
+def test_scalar_payload_is_only_the_local_trio():
+    from packtrack.services.zoho_item_sync import scalar_payload
 
     it = Item(name="X", unit="ea", description=None)
-    payload = _outbound_payload(it)
+    payload = scalar_payload(it)
     assert set(payload.keys()) == {"name", "description", "unit"}
     assert not any(k.startswith("cf_") for k in payload)

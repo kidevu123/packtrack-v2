@@ -1,5 +1,27 @@
 # Current Phase Status
 
+## v2.8.0 — Full Zoho item master-data editor (metadata-driven)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-masterdata-editor-v2.8.0` (from `main` @ `e47828e`, v2.7.1). |
+| **Service contract** | `zoho-integration-service` v1.33.0 (`PATCH /zoho/pack_track/items/{id}` full master-data write; `GET …/metadata` field policy + categories). |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — **no schema change**; brand/manufacturer/category/custom fields are Zoho-owned and never stored locally). |
+| **Tests** | full suite **261 passed**; ruff clean; Jinja compiles. |
+
+**What changed.** The one-field (`cf_product_line`) editor is replaced with a metadata-driven master-data editor on the item detail page. Owners can edit the v1.33.0 writable allowlist; everything else stays read-only.
+
+* **Editable Zoho fields** (owner-only): standard `name`, `unit`, `brand`, `manufacturer`, `category_id` (dropdown), `description`; and custom fields by `api_name`: `cf_item_type`, `cf_delivery_method`, `cf_item_size`, `cf_dosage`, `cf_pack_count`, `cf_market_value`, `cf_display_size`, `cf_product_line` (dropdown), `cf_flavor_scent`, `cf_package_type`, `cf_formulation`, `cf_pack_dimension`, `cf_unit_size` (number), `cf_case_size` (number), `cf_description`. Editability is gated on the live metadata `policy == "writable"`.
+* **Read-only (never sent):** vendor/preferred vendor, sku, cost/selling price, sales/purchase/inventory accounts, valuation method, stock counts, reorder point, reporting tags, images, status/type, taxes, and any unknown field. Read-only keys are not even collected from the form.
+* **Validation (server-side, all-or-nothing):** `category_id` checked against live categories (not clearable); dropdown custom fields against live option names (case-insensitive, canonicalized); numeric custom fields must parse; custom fields clear with `""`; `name`/`unit` can't be cleared. If metadata is unavailable, category/custom edits are rejected. Any invalid change re-renders the form (HTTP 200) with inline errors and the submitted values preserved — nothing is written.
+* **Change detection:** hidden `<key>__orig` fields drive a changed-only, single combined PATCH; no change → no service call.
+* **Sync state:** success → `synced`, failure → `failed` (local scalar edit kept), unconfigured/no Zoho id → `pending`. Retry honestly re-asserts only the locally-mirrored `name`/`description`/`unit`; master-data/custom edits are re-applied by re-saving the form.
+* **`cf_product_line` ≠ PackTrack `product_line`.** The derived browsing group is recomputed from the name and shown distinctly; it is never conflated with the Zoho custom field.
+
+**Key files:** `services/zoho_item_sync.py` (generic `payload=` PATCH + `scalar_payload`), `services/zoho_item_detail.py` (categories/field_policy accessors, `EditField`/`ItemEditor` view-model, `resolve_master_data_changes`), `routes/inventory.py` (async metadata-driven POST), `templates/inventory_detail.html` (metadata-driven form). Tests: `tests/test_inventory_masterdata_editor.py` (new), updated `test_zoho_item_sync.py`, `test_inventory_item_detail_extended.py`, `test_inventory_detail.py`.
+
+---
+
 ## v2.7.1 — Receiving vNext polish: Zoho notes + Start Receive entry (deployed + tagged)
 
 | | |

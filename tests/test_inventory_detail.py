@@ -81,7 +81,7 @@ def test_detail_renders_for_owner(session, engine, monkeypatch):
     client = _client(session, engine, monkeypatch, Role.OWNER)
     r = client.get(f"/inventory/{it.id}")
     assert r.status_code == 200
-    assert "Edit item" in r.text  # owner sees the edit form
+    assert "Save changes" in r.text  # owner sees the edit form submit
     assert "FIX 15mg 12ct" in r.text
 
 
@@ -90,8 +90,9 @@ def test_detail_readonly_for_non_owner(session, engine, monkeypatch):
     client = _client(session, engine, monkeypatch, Role.AGENT)
     r = client.get(f"/inventory/{it.id}")
     assert r.status_code == 200
-    assert "Edit item" not in r.text  # no edit form for non-owners
-    assert "Details" in r.text
+    assert "Save changes" not in r.text  # no submit for non-owners
+    assert "Read-only" in r.text
+    assert "Primary details" in r.text
 
 
 def test_detail_404_for_missing(session, engine, monkeypatch):
@@ -115,11 +116,11 @@ def test_owner_edit_updates_fields_and_parks_pending(session, engine, monkeypatc
     r = client.post(
         f"/inventory/{it.id}",
         data={
-            "name": "FIX 15mg 12ct - Renamed",
-            "description": "new desc",
+            "name": "FIX 15mg 12ct - Renamed", "name__orig": it.name,
+            "description": "new desc", "description__orig": "",
             "material_code": "MC-2",
             "vendor": "NewVendor",
-            "unit": "boxes",
+            "unit": "boxes", "unit__orig": it.unit,
             "daily_usage_rate": "2.5",
             "reorder_point": "20",
             "critical_point": "8",
@@ -158,11 +159,11 @@ def test_owner_edit_threshold_only_does_not_park_pending(session, engine, monkey
     r = client.post(
         f"/inventory/{it.id}",
         data={
-            "name": it.name,
-            "description": "",
+            "name": it.name, "name__orig": it.name,
+            "description": "", "description__orig": "",
             "material_code": it.material_code,
             "vendor": it.vendor,
-            "unit": it.unit,
+            "unit": it.unit, "unit__orig": it.unit,
             "daily_usage_rate": "0",
             "reorder_point": "30",
             "critical_point": "5",

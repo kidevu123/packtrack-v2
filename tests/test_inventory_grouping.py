@@ -113,7 +113,7 @@ def test_group_filter_generic_includes_null_product_line(session: Session):
 
 def test_push_item_update_parks_pending(session: Session):
     it = _add(session, "FIX 15mg - Bottle Label")
-    result = push_item_update(session, it)
+    result = push_item_update(session, it, payload={"name": it.name})
     assert result.status == "pending"
     assert result.ok_local is True
     assert it.zoho_push_status == "pending"

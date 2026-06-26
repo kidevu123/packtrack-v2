@@ -22,12 +22,18 @@ from packtrack.services.product_line import (
     group_sort_key,
 )
 from packtrack.services.scope import get_scope
-from packtrack.services.zoho_item_detail import build_extended_detail, product_line_options
+from packtrack.services.zoho_item_detail import (
+    WRITABLE_CUSTOM_FIELDS,
+    build_extended_detail,
+    build_item_editor,
+    fetch_metadata,
+    resolve_master_data_changes,
+)
 from packtrack.services.zoho_item_sync import (
     PUSH_FAILED,
     PUSH_SYNCED,
-    ZOHO_OWNED_EDITABLE_FIELDS,
     push_item_update,
+    scalar_payload,
 )
 
 router = APIRouter()
@@ -140,11 +146,46 @@ def item_detail(
     item = session.get(Item, item_id)
     if item is None:
         raise HTTPException(status_code=404)
-    coverage = coverage_for_items(session, [item]).get(item.id)
-    suggested = suggested_reorder_qty(item)
     # Read-only extended Zoho detail (v2.6.0). Never raises — a service blip
     # leaves ``extended.available`` False and the local detail still renders.
     extended = build_extended_detail(item.zoho_item_id)
+    return _render_item_detail(
+        request, session, item, user, saved=saved or "", extended=extended
+    )
+
+
+def _local_values(item: Item) -> dict[str, str]:
+    """The PackTrack-mirrored Zoho scalar trio (authoritative for these three)."""
+    return {
+        "name": item.name or "",
+        "unit": item.unit or "",
+        "description": item.description or "",
+    }
+
+
+def _render_item_detail(
+    request: Request,
+    session: Session,
+    item: Item,
+    user: User,
+    *,
+    saved: str,
+    extended,
+    submitted: dict[str, str] | None = None,
+    errors: dict[str, str] | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """Render the item detail page (also reused to re-show a form with errors)."""
+    coverage = coverage_for_items(session, [item]).get(item.id)
+    suggested = suggested_reorder_qty(item)
+    can_edit = user.role == Role.OWNER
+    editor = build_item_editor(
+        extended,
+        can_edit=can_edit,
+        local_values=_local_values(item),
+        submitted=submitted,
+        errors=errors,
+    )
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "inventory_detail.html",
@@ -153,10 +194,12 @@ def item_detail(
             "it": item,
             "coverage": coverage,
             "suggested": suggested,
-            "can_edit": user.role == Role.OWNER,
-            "saved": saved or "",
+            "can_edit": can_edit,
+            "saved": saved,
             "extended": extended,
+            "editor": editor,
         },
+        status_code=status_code,
     )
 
 
@@ -164,40 +207,44 @@ def _clean(value: str, limit: int) -> str:
     return (value or "").strip()[:limit]
 
 
+def _form_float(form, key: str) -> float:
+    try:
+        return float(str(form.get(key) or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _form_int(form, key: str) -> int:
+    try:
+        return int(float(str(form.get(key) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 @router.post("/inventory/{item_id:int}")
-def update_item(
+async def update_item(
     item_id: int,
     request: Request,
-    name: str = Form(""),
-    description: str = Form(""),
-    material_code: str = Form(""),
-    vendor: str = Form(""),
-    unit: str = Form(""),
-    cf_product_line: str = Form(""),
-    cf_product_line_original: str = Form(""),
-    daily_usage_rate: float = Form(0),
-    reorder_point: float = Form(0),
-    critical_point: float = Form(0),
-    sea_lead_days: int = Form(0),
-    express_lead_days: int = Form(0),
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    """Owner-only full item edit from the detail page.
+    """Owner-only metadata-driven item master-data edit (v2.8.0).
 
-    ``current_stock`` is intentionally NOT editable — stock comes from Zoho /
-    receipts, and the repo has no manual inventory-adjustment pattern that we
-    could safely reuse from the UI.
+    Saves PackTrack-owned operational fields locally, then validates the changed
+    Zoho master-data fields against live metadata and pushes a single combined,
+    changed-only PATCH through the integration service.
 
-    Editing a Zoho-owned, pushable field (name/description/unit) pushes the
-    change to Zoho through the integration service. ``vendor`` is Zoho-read-only
-    for synced items (the service rejects vendor writes); it is only locally
-    editable for manual items that have no ``zoho_item_id``.
+    Editable Zoho fields (per the v1.33.0 service contract): name, unit, brand,
+    manufacturer, category_id, description, and the allowlisted custom fields.
+    Everything else (vendor, sku, pricing, accounts, valuation, stock, tags,
+    images, status/type) stays read-only and is never sent — read-only keys are
+    not even collected from the form. ``current_stock`` is not editable.
 
-    The Zoho ``cf_product_line`` dropdown custom field (v2.7.0) is the only
-    custom field that is editable. It is validated server-side against the live
-    metadata options before any write; an empty string clears it. It is NOT the
-    PackTrack-derived ``product_line`` browsing group, which is left untouched.
+    Validation is all-or-nothing: if any changed field is invalid, nothing is
+    written to Zoho and the form is re-rendered with inline errors and the
+    submitted values preserved. PackTrack's derived ``product_line`` browsing
+    group is recomputed from the name and is never conflated with Zoho's
+    ``cf_product_line`` custom field.
     """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -205,92 +252,68 @@ def update_item(
     if item is None:
         raise HTTPException(status_code=404)
 
-    new_name = _clean(name, _MAX_NAME)
-    new_values = {
-        "name": new_name or item.name,  # never blank out the name
-        "description": (description or "").strip() or None,
-        "unit": _clean(unit, _MAX_UNIT) or item.unit,
-    }
-    # Did any pushable Zoho-owned field actually change? Only then do we push.
-    zoho_dirty = any(
-        getattr(item, fld) != new_values[fld]
-        for fld in ZOHO_OWNED_EDITABLE_FIELDS
-    )
+    form = await request.form()
 
-    item.name = new_values["name"]
-    item.description = new_values["description"]
-    item.unit = new_values["unit"]
+    # --- PackTrack-owned operational fields (local only; never sent to Zoho) ---
+    item.material_code = _clean(str(form.get("material_code", "")), _MAX_MATERIAL_CODE) or None
+    item.daily_usage_rate = max(0.0, _form_float(form, "daily_usage_rate"))
+    item.reorder_point = max(0.0, _form_float(form, "reorder_point"))
+    item.critical_point = max(0.0, _form_float(form, "critical_point"))
+    item.sea_lead_days = max(0, _form_int(form, "sea_lead_days"))
+    item.express_lead_days = max(0, _form_int(form, "express_lead_days"))
+    # Owner override locks reorder_point from being overwritten by Zoho sync.
+    item.reorder_point_locked = True
     # Vendor: Zoho-read-only for synced items; only editable for manual items.
     if not item.zoho_item_id:
-        item.vendor = _clean(vendor, _MAX_VENDOR) or None
-    item.material_code = _clean(material_code, _MAX_MATERIAL_CODE) or None
-    item.daily_usage_rate = max(0.0, float(daily_usage_rate or 0))
-    item.reorder_point = max(0.0, float(reorder_point or 0))
-    item.critical_point = max(0.0, float(critical_point or 0))
-    item.sea_lead_days = max(0, int(sea_lead_days or 0))
-    item.express_lead_days = max(0, int(express_lead_days or 0))
-    # Owner override locks reorder_point from being overwritten by Zoho sync,
-    # matching the existing inline-edit behavior.
-    item.reorder_point_locked = True
-    # Keep the brand grouping in step with the (possibly edited) name. This is
-    # PackTrack's derived browsing group and is deliberately independent of the
-    # Zoho ``cf_product_line`` custom field handled below.
+        item.vendor = _clean(str(form.get("vendor", "")), _MAX_VENDOR) or None
+    session.add(item)
+    session.commit()
+
+    # --- Collect only the allowlisted Zoho fields + their hidden originals ---
+    extended = build_extended_detail(item.zoho_item_id)
+    std_keys = ("name", "unit", "brand", "manufacturer", "category_id", "description")
+    submitted: dict[str, str] = {k: str(form.get(k, "")) for k in std_keys}
+    originals: dict[str, str] = {k: str(form.get(f"{k}__orig", "")) for k in std_keys}
+    for api in WRITABLE_CUSTOM_FIELDS:
+        submitted[api] = str(form.get(api, ""))
+        originals[api] = str(form.get(f"{api}__orig", ""))
+
+    metadata = fetch_metadata()
+    res = resolve_master_data_changes(
+        metadata=metadata,
+        categories=extended.categories,
+        submitted=submitted,
+        originals=originals,
+    )
+
+    # All-or-nothing: any invalid change re-renders the form with inline errors
+    # and the user's submitted values — nothing is written to Zoho.
+    if res.errors:
+        return _render_item_detail(
+            request, session, item, user, saved="invalid", extended=extended,
+            submitted=submitted, errors=res.errors, status_code=200,
+        )
+
+    if not res.payload:
+        # Only local operational fields changed (or nothing did).
+        return RedirectResponse(url=f"/inventory/{item_id}?saved=ok", status_code=303)
+
+    # Mirror the validated Zoho scalar trio locally before pushing so a failed
+    # push keeps the local edit (and the derived browsing group stays in step).
+    if "name" in res.payload:
+        item.name = _clean(res.payload["name"], _MAX_NAME) or item.name
+        res.payload["name"] = item.name
+    if "unit" in res.payload:
+        item.unit = _clean(res.payload["unit"], _MAX_UNIT) or item.unit
+        res.payload["unit"] = item.unit
+    if "description" in res.payload:
+        item.description = (res.payload["description"] or "").strip() or None
     item.product_line = derive_product_line(item.name)
     session.add(item)
     session.commit()
 
-    # Zoho cf_product_line: validate + change-detect before any outbound write.
-    # When the editable dropdown was not rendered (non-owner, manual item, or
-    # metadata unavailable) both fields default to "" and compare equal → no-op.
-    cf_to_send, cf_flash = _resolve_cf_product_line(
-        item, cf_product_line, cf_product_line_original
-    )
-
-    saved = "ok"
-    if zoho_dirty or cf_to_send is not None:
-        saved = _saved_token(
-            push_item_update(session, item, cf_product_line=cf_to_send).status
-        )
-    if cf_flash:
-        # A rejected/unvalidatable custom-field edit takes flash priority so the
-        # owner knows the dropdown was not saved (scalar fields may still have
-        # been pushed above).
-        saved = cf_flash
-
+    saved = _saved_token(push_item_update(session, item, payload=res.payload).status)
     return RedirectResponse(url=f"/inventory/{item_id}?saved={saved}", status_code=303)
-
-
-def _resolve_cf_product_line(
-    item: Item,
-    submitted: str,
-    original: str,
-) -> tuple[str | None, str | None]:
-    """Validate + change-detect an owner's Zoho ``cf_product_line`` edit.
-
-    Returns ``(cf_to_send, flash)`` where ``cf_to_send`` is the value to write
-    (``""`` clears, a non-empty string sets, ``None`` means "don't write") and
-    ``flash`` is an optional ``?saved=`` token describing a rejection.
-
-    Note: FastAPI coerces an empty form field to ``""`` (it cannot be told apart
-    from an absent one), so "unchanged" — including the not-rendered case where
-    both fields default to ``""`` — is detected purely by comparing the submitted
-    value to the hidden original.
-
-    * Unchanged or item not Zoho-synced → ``(None, None)``.
-    * Metadata unavailable → ``(None, "cf_unavailable")`` (can't validate; never
-      post an unvalidated value).
-    * Empty string (clear) or a value present in live options → ``(value, None)``.
-    * Anything else → ``(None, "cf_invalid")`` (no write).
-    """
-    value = (submitted or "").strip()
-    if not item.zoho_item_id or value == (original or "").strip():
-        return None, None  # not applicable / unchanged
-    options = product_line_options()
-    if options is None:
-        return None, "cf_unavailable"
-    if value == "" or value in options:
-        return value, None
-    return None, "cf_invalid"
 
 
 def _saved_token(push_status: str) -> str:
@@ -308,17 +331,22 @@ def retry_item_sync(
     user: User = Depends(require_user),
     session: Session = Depends(get_session),
 ):
-    """Owner-only: retry pushing this item's Zoho-owned fields to Zoho.
+    """Owner-only: retry pushing this item's locally-mirrored scalars to Zoho.
 
-    Re-runs ``push_item_update`` and redirects back to the detail page with a
-    ``saved=synced|failed|local`` flash. Intentionally minimal — no outbox UI.
+    Honest retry: only ``name``/``description``/``unit`` are stored locally, so
+    those are the only fields this can re-assert. Brand/manufacturer/category and
+    custom-field edits that failed must be re-submitted from the edit form (they
+    aren't persisted locally). Redirects with a ``saved=synced|failed|local``
+    flash. Intentionally minimal — no outbox UI.
     """
     if user.role != Role.OWNER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     item = session.get(Item, item_id)
     if item is None:
         raise HTTPException(status_code=404)
-    saved = _saved_token(push_item_update(session, item).status)
+    saved = _saved_token(
+        push_item_update(session, item, payload=scalar_payload(item)).status
+    )
     return RedirectResponse(url=f"/inventory/{item_id}?saved={saved}", status_code=303)
 
 
