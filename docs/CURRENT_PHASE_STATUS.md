@@ -45,22 +45,38 @@
 
 ## v2.6.x — Ship-state (2026-06-26): deployed, **pending Stage-2 canary**, NOT tagged
 
+> Historical entry — superseded by the ## v2.6.1 canary success section above (which has the same data plus tag/POEvent IDs). Kept here for the pre-canary deploy timeline.
+
 | | |
 |---|---|
-| **Production version** | `2.6.1` (per `/healthz`) |
-| **Deploy commit** | `7ce0af6` (PR #4 merge — *richer inventory item detail*) |
-| **v2.6.0 commit** | `f2d7f63` (PR #3 squash — *Receiving vNext Stage 2*). Deployed first, then superseded by the `2.6.1` deploy. |
-| **Alembic head** | `e1f2a3b4c5d7` (unchanged across both releases — neither PR added a migration). |
-| **Tags** | **None yet for the v2.6.x line.** Per decision (2026-06-26): `v2.6.0` will be **skipped entirely**; a single `v2.6.1` tag will be created at `7ce0af6` once the Stage-2 canary passes. |
-| **`RECEIVING_VNEXT_ENABLED`** | **Unset** in `/etc/packtrack/packtrack.env` → Python default `False` in effect. Stage 2 routes (`/receive/v2/{id}/review`, `/finalize`, `/retry-push`) return 404 to operators. Legacy `/receive/{zoho_po_id}` remains the only operator-visible receive flow. |
-| **Stage 2 canary** | **Pending.** Runbook: [`docs/RUNBOOK_RECEIVING_VNEXT_CANARY.md`](./RUNBOOK_RECEIVING_VNEXT_CANARY.md). |
-| **PR #4 (item detail)** | Operator-visible, no flag — read-only and degrades gracefully when the upstream service is unavailable. No canary required for it. |
+| **Tag** | `v2.6.1` (annotated `cfdc2d81…`) at commit `7ce0af6` — pushed to origin. |
+| **Tag message** | "PackTrack v2.6.1 — Receiving vNext finalize canary" |
+| **Canary verdict** | **PASS** — real receive `R-2026-0001` against PO-00250 finalized + pushed live. |
+| **Tagged SHA** | `7ce0af667c457fe7f676531a5497e4f4237fca04` (the build that served the canary finalize) |
+| **`RECEIVING_VNEXT_ENABLED`** | **ON** in `/etc/packtrack/packtrack.env` (set during canary, **kept ON** for continued controlled use by OWNER/RECEIVING). Legacy `/receive/{zoho_po_id}` flow remains available and unchanged. |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no migration in Stage 2). |
 
-**Deploy verification (post-PR-#3 deploy, then post-PR-#4 deploy):**
-* `/healthz` → `{"ok":true,"version":"2.6.1","db":"ok",...}`
-* Production Alembic current/head = `e1f2a3b4c5d7` (Stage 1's `receive_vnext_stage1`).
-* Smoke (8/8) passed both deploys.
-* `RECEIVING_VNEXT_ENABLED` not in process env → flag default OFF holds.
+**Canary evidence (Receive id=1, R-2026-0001, PO-00250, BoxReceipt id=139):**
+* `Receive.status = pushed_ok` at 15:26:49.92 UTC, 34 ms after `finalized_at`.
+* Exactly 1 BoxReceipt materialized (no duplicates). `submission_line_index=1`.
+* `box_number = "PT-4a9905a3fda247c39f4d4431ebc05e8a"` — v2.4.1 Luma contract preserved.
+* `submission_id` propagated from Receive → BoxReceipt verbatim.
+* Luma response: `{ok: True, created: True, events_emitted: ['MATERIAL_RECEIVED', 'PACKAGING_BOX_RECEIVED'], accepted_quantity: 1, luma_packaging_lot_id: 995751ce-…}`.
+* Zoho per-leaf status `committed` (rolled-up POEvent `receive_pushed_ok`, no `zoho_failed` reasons).
+* POEvents emitted: `receive_finalized` (id=130) and `receive_pushed_ok` (id=131) on PO_id=3.
+* Service journal clean since finalize. `/healthz`, `/inventory`, `/receive` all responding.
+
+**Note on running production version**: `/healthz` may report a higher
+version than `v2.6.1` if a subsequent unrelated deploy has happened (e.g.
+the `2.7.0` line that began rolling shortly after this canary). The
+`v2.6.1` tag specifically anchors the commit that the canary finalize
+ran against (`7ce0af6`), independent of any later deploys.
+
+**Earlier ship-state (now superseded by the tag above):**
+* PR #3 (`f2d7f63`) merged 2026-06-25 — Receiving vNext Stage 2 code.
+* PR #4 (`7ce0af6`) merged 2026-06-25 — Richer inventory item detail.
+* Both deployed with `RECEIVING_VNEXT_ENABLED` default OFF.
+* Per decision 2026-06-26, `v2.6.0` was skipped; single `v2.6.1` tag anchors the v2.6.x line at canary-verified SHA.
 
 ## v2.6.1 — Richer inventory item detail (read-only Zoho metadata)
 
