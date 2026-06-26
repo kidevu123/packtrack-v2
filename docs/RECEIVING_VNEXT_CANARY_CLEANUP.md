@@ -32,12 +32,12 @@ invisible.
 
 ### PackTrack
 The `ReceiveStatus` enum already includes a `cancelled` value, but
-there is **no Stage 2 route** that transitions a receive into it. To
+there is no Stage 2 route that transitions a receive into it. To
 mark Receive id=1 as cancelled / test, choose one of:
 
-1. **(a) Add a `POST /receive/v2/{id}/cancel` route** (small Stage-3 work).
-2. **(b) One-shot DB update**: `UPDATE receives SET status='cancelled', notes = notes || E'\n[Marked as test by ops 2026-MM-DD]' WHERE id=1;` (bypasses POEvent audit; recommended only with explicit operator approval).
-3. **(c) Leave it alone**. The `Receive.notes` already contains the "CANARY DRAFT" marker; the `receive_pushed_ok` POEvent is honest about what happened. The audit trail is already correct.
+1. **(a) Use the v2.7.2 `POST /receive/v2/{id}/mark-test` route** (NEW — OWNER-only, emits a `receive_marked_test` POEvent, appends a marker to `Receive.notes`, and re-renders the result page with a prominent "External Zoho/Luma records were NOT reversed" banner. Does NOT call Zoho or Luma. Requires the verbose confirmation string `"I UNDERSTAND ZOHO AND LUMA ARE NOT REVERSED"` so an accidental click cannot fire it). **Recommended path.**
+2. **(b) One-shot DB update**: `UPDATE receives SET status='cancelled', notes = notes || E'\n[Marked as test by ops 2026-MM-DD]' WHERE id=1;` (bypasses POEvent audit; only if option (a) cannot be used).
+3. **(c) Leave it alone**. The `Receive.notes` already contains the "CANARY DRAFT" marker from the draft-creation script; the `receive_pushed_ok` POEvent is honest about what happened. The audit trail is already correct.
 
 **Do not delete** the `receives` / `box_receipts` / `po_events` rows. External systems (Zoho, Luma) hold `packtrack_receipt_id=4a9905a3fda247c39f4d4431ebc05e8a` and reverse-lookups would silently fail. Soft-delete via the `cancelled` status (option a or b) is the only reasonable choice.
 

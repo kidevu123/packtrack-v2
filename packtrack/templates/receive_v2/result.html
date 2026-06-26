@@ -4,16 +4,20 @@
 {% block container_class %}max-w-[1200px]{% endblock %}
 {% block content %}
 
-{# Pre-compute status tone for the header banner. #}
-{% if outcome.receive_status.value == "pushed_ok" %}
+{# Pre-compute status tone for the header banner. When ``outcome`` is None
+   (e.g. the mark-as-test action re-renders this template after marking
+   the receive without re-running the push), fall back to the receive's
+   own status. #}
+{% set _status_value = (outcome.receive_status.value if outcome else receive.status.value) %}
+{% if _status_value == "pushed_ok" %}
   {% set _banner_class = "bg-emerald-50 border-emerald-200 text-emerald-900" %}
   {% set _banner_msg = "✓ Receive finalized and pushed to Zoho + Luma." %}
-{% elif outcome.receive_status.value == "push_failed" %}
+{% elif _status_value == "push_failed" %}
   {% set _banner_class = "bg-red-50 border-red-200 text-red-900" %}
   {% set _banner_msg = "✗ Push had failures — see per-line status below; you can retry the failed leaves." %}
 {% else %}
   {% set _banner_class = "bg-stone-50 border-stone-200 text-stone-900" %}
-  {% set _banner_msg = "Receive status: " ~ outcome.receive_status.value %}
+  {% set _banner_msg = "Receive status: " ~ _status_value %}
 {% endif %}
 
 {{ ui.page_header(
@@ -22,10 +26,21 @@
      secondary=[{"label":"← Back to receive","href":"/receive/v2/" ~ receive.id}],
 ) }}
 
+{% if marked_test_banner %}
+<div class="border rounded-2xl p-4 shadow-sm mb-5 bg-amber-50 border-amber-200 text-amber-900">
+  <p class="text-sm font-semibold">⚠ Test / canary receive</p>
+  <p class="mt-1 text-xs">
+    This receive has been marked as a test or canary. <strong>External Zoho and Luma records were NOT reversed</strong> — they remain in those systems as honest history.
+    The PT-side notes and POEvent log have the full marker audit trail.
+  </p>
+</div>
+{% endif %}
+
 <div class="border rounded-2xl p-4 shadow-sm mb-5 {{ _banner_class }}">
   <p class="text-sm font-medium">{{ _banner_msg }}</p>
 </div>
 
+{% if outcome %}
 <div class="bg-white border border-stone-200 rounded-2xl overflow-hidden shadow-sm mb-5">
   <table class="w-full text-sm">
     <thead class="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-400">
@@ -58,9 +73,10 @@
     </tbody>
   </table>
 </div>
+{% endif %}
 
-{% if outcome.receive_status.value == "push_failed" %}
-<form method="post" action="/receive/v2/{{ receive.id }}/retry-push">
+{% if outcome and _status_value == "push_failed" %}
+<form method="post" action="/receive/v2/{{ receive.id }}/retry-push" class="mb-5">
   <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
     Retry failed pushes
   </button>
@@ -68,6 +84,41 @@
     Re-fires only leaves still in NOT_READY / PENDING / FAILED. Zoho re-submission is safe via the existing idempotency key.
   </p>
 </form>
+{% endif %}
+
+{# Owner-only Mark-as-test form. Hidden when the marker is already
+   applied (renders the banner above instead). Submission requires the
+   verbose confirmation string — the form pre-fills it so an OWNER who
+   genuinely wants to mark it can submit with one click; a stray POST
+   without the field is rejected by the route. #}
+{% if user.role.value == 'owner' and not marked_test_banner %}
+<details class="mt-4 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+  <summary class="text-sm font-semibold text-amber-900 cursor-pointer select-none">
+    Mark this receive as test / canary (owner only — does NOT reverse Zoho/Luma)
+  </summary>
+  <form method="post" action="/receive/v2/{{ receive.id }}/mark-test" class="mt-3 space-y-3">
+    <p class="text-xs text-amber-900">
+      This labels the PT-side receive as a test for audit purposes only.
+      Zoho purchase receive and Luma packaging lot are NOT reversed and
+      remain in those systems as honest history.
+    </p>
+    <label class="block text-xs text-stone-700">
+      Reason (optional):
+      <input name="reason" type="text" maxlength="240"
+             placeholder="e.g. vNext canary, never used operationally"
+             class="mt-1 w-full rounded-lg border-stone-300 text-sm" />
+    </label>
+    <label class="flex items-start gap-2 text-xs text-stone-700">
+      <input name="confirm" type="checkbox"
+             value="I UNDERSTAND ZOHO AND LUMA ARE NOT REVERSED"
+             class="mt-0.5 rounded border-stone-400 text-stone-900 focus:ring-0" required />
+      <span>I understand external Zoho and Luma records will NOT be reversed by this action.</span>
+    </label>
+    <button class="rounded-lg bg-amber-700 text-white text-sm font-medium px-4 py-2 hover:bg-amber-800">
+      Mark as test / canary
+    </button>
+  </form>
+</details>
 {% endif %}
 
 <p class="mt-4 text-[11px] text-stone-400">

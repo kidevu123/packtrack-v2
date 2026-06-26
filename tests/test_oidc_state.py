@@ -64,14 +64,52 @@ def test_authentik_base_rejects_half_set_issuer():
 
 def test_signer_tampered_raises_generic_badsignature_not_expired():
     """Tampered state must NOT come back as SignatureExpired so the error
-    path stays distinct and the message stays truthful."""
+    path stays distinct and the message stays truthful.
+
+    Tampering strategy: replace the entire signature segment with a known
+    invalid (but URL-safe-base64-decodable) value. Prior versions of this
+    test flipped only the trailing base64 character, which is *not* a
+    guaranteed corruption because trailing base64 bits can decode to the
+    same byte when their padding context allows it — that produced an
+    intermittent flake on CI (~1-in-5 runs).
+    """
     settings.PACKTRACK_SECRET_KEY = "test-key-fixed-for-deterministic-test"
     s = URLSafeTimedSerializer(settings.PACKTRACK_SECRET_KEY, salt="oidc-state")
     sig = s.dumps({"n": "abc", "next": "/"})
-    # Flip one char in the signature portion → BadSignature, not Expired.
     payload, ts, signature = sig.split(".")
-    bad_sig = signature[:-1] + ("A" if signature[-1] != "A" else "B")
+    # Replace with a fixed-length signature of all 'A' (decodes to all
+    # zero bytes). HMAC-SHA1 is 20 bytes; URL-safe-base64 length is 27
+    # (no padding) — match the original length so the loader doesn't
+    # bail on size before checking the signature.
+    bad_sig = "A" * len(signature)
+    # And as a safety net, run a small loop so a future itsdangerous
+    # version that happens to validate the all-zero signature would
+    # surface immediately rather than as a flake.
+    seen_bad_signature = 0
+    for variant in (bad_sig, "B" * len(signature), "C" * len(signature),
+                    "Z" * len(signature), "_" * len(signature)):
+        try:
+            s.loads(
+                ".".join([payload, ts, variant]),
+                max_age=auth_route._OIDC_STATE_MAX_AGE_SECONDS,
+            )
+        except SignatureExpired as err:  # pragma: no cover — must NOT happen
+            raise AssertionError(
+                f"Tampered sig {variant!r} was reported as SignatureExpired"
+            ) from err
+        except BadSignature:
+            seen_bad_signature += 1
+    # All five variants must be rejected as plain BadSignature.
+    assert seen_bad_signature == 5, (
+        f"expected 5 tampered variants to raise BadSignature, got {seen_bad_signature}"
+    )
+
+    # Also keep the original single-flip assertion shape so the test name
+    # still matches its intent — but pin determinism with a guaranteed
+    # invalid sig.
     with pytest.raises(BadSignature) as info:
-        s.loads(".".join([payload, ts, bad_sig]),
-                max_age=auth_route._OIDC_STATE_MAX_AGE_SECONDS)
+        s.loads(
+            ".".join([payload, ts, bad_sig]),
+            max_age=auth_route._OIDC_STATE_MAX_AGE_SECONDS,
+        )
     assert not isinstance(info.value, SignatureExpired)
