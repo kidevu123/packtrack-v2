@@ -450,6 +450,82 @@ class ReceivePushOutcome:
     results: list[LeafPushResult]
 
 
+def build_zoho_receive_notes(
+    session: Session,
+    receive: Receive,
+    box_receipts: list[BoxReceipt],
+) -> str:
+    """Compose a human-readable ``notes`` string for the Zoho receive.
+
+    The upstream zoho-integration-service prepends its own audit trace
+    ("[zoho-integration] pack_track_receipt_id=...") to whatever we send,
+    so this function MUST NOT duplicate those ids. We focus on the
+    information an operations/warehouse user needs:
+
+      * which Receive this came from
+      * which PO + vendor case(s)
+      * who finalized it
+      * the items + quantities
+      * any operator-supplied free-text notes from the Receive
+
+    Returns plain text, joined with ``\\n``. Capped at ~1800 chars so
+    the upstream service's trace + truncation marker still fit under
+    Zoho's ~2000-char limit.
+    """
+    po = session.get(PurchaseOrder, receive.purchase_order_id) if receive.purchase_order_id else None
+    operator = session.get(User, receive.finalized_by_user_id or receive.received_by_user_id)
+
+    # Unique vendor case numbers, in declaration order, NULL-safe.
+    cases = session.exec(
+        select(ReceiveCase)
+        .where(ReceiveCase.receive_id == receive.id)
+        .order_by(ReceiveCase.sequence, ReceiveCase.id)
+    ).all()
+    case_labels: list[str] = []
+    seen_cases: set[str] = set()
+    for case in cases:
+        label = (case.vendor_case_number or "").strip() or f"#{case.sequence}"
+        if label not in seen_cases:
+            seen_cases.add(label)
+            case_labels.append(label)
+
+    # Per-item line summary (one bullet per leaf, ordered by submission_line_index).
+    item_lines: list[str] = []
+    for box in sorted(box_receipts, key=lambda b: (b.submission_line_index or 0, b.id or 0)):
+        qty = box.accepted_quantity if box.accepted_quantity is not None else box.declared_quantity
+        unit = (box.unit_of_measure or "").strip() or ""
+        name = (box.material_name or "").strip() or f"item {box.item_id}"
+        item_lines.append(f"  - {name}: {qty:g}{(' ' + unit) if unit else ''}")
+
+    lines: list[str] = ["Received via PackTrack", ""]
+    lines.append(f"Receive: {receive.receive_number}")
+    if po is not None:
+        lines.append(f"PO: {po.po_number}")
+    if case_labels:
+        # "Case: A; B; C" — keep short to avoid bloating the description.
+        lines.append(f"Case: {'; '.join(case_labels[:6])}" + (" (+more)" if len(case_labels) > 6 else ""))
+    if operator is not None:
+        name = (operator.name or "").strip() or (operator.email or f"user {operator.id}")
+        lines.append(f"Operator: {name}")
+    if receive.delivery_date is not None:
+        lines.append(f"Delivery date: {receive.delivery_date.isoformat()}")
+    if item_lines:
+        lines.append("")
+        lines.append(f"Items ({len(item_lines)}):")
+        lines.extend(item_lines)
+
+    receive_note = (receive.notes or "").strip()
+    if receive_note:
+        lines.append("")
+        lines.append("Notes:")
+        lines.append(receive_note)
+
+    out = "\n".join(lines)
+    if len(out) > 1800:
+        out = out[:1800].rstrip() + "\n[truncated]"
+    return out
+
+
 _ZOHO_OK_STATUSES = {"committed", "blocked", "skipped"}
 """Per-line Zoho outcomes that do NOT cause the receive to be
 ``PUSH_FAILED``.
@@ -671,7 +747,7 @@ def push_receive_to_integrations(
             mirror, zoho_submissions,
             operator=user,
             session_id=(receive.submission_id or "")[:64],
-            notes=receive.notes,
+            notes=build_zoho_receive_notes(session, receive, box_receipts),
         )
         for zr in zoho_results:
             prev = results.get(zr.submission.box_receipt_id)

@@ -20,35 +20,55 @@
 
 {% macro receive_card(m, fully_received, is_partial) -%}
   {% set po = linked.get(m.zoho_purchaseorder_id) %}
-  <a href="/receive/{{ m.zoho_purchaseorder_id }}"
-     class="flex items-center gap-4 rounded-xl border bg-white px-5 py-4 hover:border-stone-400 transition-colors
-            {{ 'border-emerald-200 opacity-70' if fully_received else ('border-amber-300 shadow-sm' if is_partial else 'border-stone-200') }}">
-    <div class="flex-1 min-w-0">
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="font-semibold text-stone-900">{{ m.purchaseorder_number or m.zoho_purchaseorder_id }}</span>
-        {% if fully_received %}
-          {{ ui.status_badge("Fully received", tone="ok") }}
-        {% elif is_partial %}
-          {{ ui.status_badge("Partial", tone="warn") }}
-        {% else %}
-          {{ ui.status_badge("Pending", tone="muted") }}
-        {% endif %}
-        {% if po %}
-          {{ ui.status_badge("Linked to PT", tone="info", size="sm") }}
-        {% endif %}
+  {# vNext "Start receive" button is shown only when:
+       * RECEIVING_VNEXT_ENABLED is true, AND
+       * the PO is linked to a PackTrack PurchaseOrder (we need the
+         internal po_id for the vNext start route), AND
+       * the PO is not fully received.
+     Otherwise we keep the legacy whole-card link to /receive/{zoho_po_id}. #}
+  {% set show_vnext = vnext_enabled and po and not fully_received %}
+  <div class="flex items-stretch gap-2 rounded-xl border bg-white transition-colors
+              {{ 'border-emerald-200 opacity-70' if fully_received else ('border-amber-300 shadow-sm' if is_partial else 'border-stone-200') }}">
+    <a href="/receive/{{ m.zoho_purchaseorder_id }}"
+       class="flex items-center gap-4 px-5 py-4 flex-1 min-w-0 hover:bg-stone-50 rounded-l-xl">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-semibold text-stone-900">{{ m.purchaseorder_number or m.zoho_purchaseorder_id }}</span>
+          {% if fully_received %}
+            {{ ui.status_badge("Fully received", tone="ok") }}
+          {% elif is_partial %}
+            {{ ui.status_badge("Partial", tone="warn") }}
+          {% else %}
+            {{ ui.status_badge("Pending", tone="muted") }}
+          {% endif %}
+          {% if po %}
+            {{ ui.status_badge("Linked to PT", tone="info", size="sm") }}
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-4 mt-1 text-sm text-stone-500 flex-wrap">
+          <span>{{ m.vendor_name or '—' }}</span>
+          <span class="text-stone-300">·</span>
+          <span>{{ (m.line_items or []) | length }} line{{ 's' if (m.line_items or []) | length != 1 }}</span>
+          {% if m.date %}<span class="text-stone-300">·</span><span>{{ m.date }}</span>{% endif %}
+          {% if m.total %}<span class="text-stone-300">·</span><span class="font-medium text-stone-700 tabular-nums">${{ "%.2f" | format(m.total) }}</span>{% endif %}
+        </div>
       </div>
-      <div class="flex items-center gap-4 mt-1 text-sm text-stone-500 flex-wrap">
-        <span>{{ m.vendor_name or '—' }}</span>
-        <span class="text-stone-300">·</span>
-        <span>{{ (m.line_items or []) | length }} line{{ 's' if (m.line_items or []) | length != 1 }}</span>
-        {% if m.date %}<span class="text-stone-300">·</span><span>{{ m.date }}</span>{% endif %}
-        {% if m.total %}<span class="text-stone-300">·</span><span class="font-medium text-stone-700 tabular-nums">${{ "%.2f" | format(m.total) }}</span>{% endif %}
-      </div>
-    </div>
-    <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 text-stone-400 shrink-0">
-      <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
-    </svg>
-  </a>
+      <svg viewBox="0 0 20 20" fill="currentColor" class="size-4 text-stone-400 shrink-0">
+        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+      </svg>
+    </a>
+    {% if show_vnext %}
+      <a href="/receive/v2/new?po_id={{ po.id }}"
+         data-testid="start-receive-vnext"
+         title="Start a case-first receive (vNext)"
+         class="shrink-0 flex items-center gap-1.5 px-4 my-2 mr-2 rounded-lg border border-stone-900 bg-stone-900 text-white text-xs font-medium hover:bg-stone-800 transition-colors">
+        <svg viewBox="0 0 20 20" fill="currentColor" class="size-3.5">
+          <path d="M10 3.75a.75.75 0 01.75.75v4.75H15.5a.75.75 0 010 1.5h-4.75v4.75a.75.75 0 01-1.5 0V10.75H4.5a.75.75 0 010-1.5h4.75V4.5A.75.75 0 0110 3.75z" />
+        </svg>
+        Start receive
+      </a>
+    {% endif %}
+  </div>
 {%- endmacro %}
 
 {% set counts = namespace(pending=0, partial=0, done=0) %}
