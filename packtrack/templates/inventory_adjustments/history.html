@@ -134,14 +134,53 @@
               {% if r.quantity_delta > 0 %}+{% endif %}{{ r.quantity_delta }}
             </td>
             <td class="px-4 py-2 text-right tabular-nums font-medium">{{ r.quantity_after }}</td>
-            <td class="px-4 py-2">
-              <span class="text-[11px] font-mono uppercase tracking-wider
-                {%- if r.zoho_sync_status.value == 'synced' %} text-emerald-700
-                {%- elif r.zoho_sync_status.value == 'failed' %} text-red-700
-                {%- elif r.zoho_sync_status.value == 'pending' %} text-amber-700
-                {%- else %} text-stone-400{% endif %}">
-                {{ r.zoho_sync_status.value }}
-              </span>
+            <td class="px-4 py-2" data-testid="adjustment-sync-cell-{{ r.id }}">
+              <div class="flex items-baseline gap-2 flex-wrap">
+                <span class="text-[11px] font-mono uppercase tracking-wider
+                  {%- if r.zoho_sync_status.value == 'synced' %} text-emerald-700
+                  {%- elif r.zoho_sync_status.value == 'failed' %} text-red-700
+                  {%- elif r.zoho_sync_status.value == 'pending' %} text-amber-700
+                  {%- elif r.zoho_sync_status.value == 'skipped' %} text-amber-700
+                  {%- else %} text-stone-400{% endif %}">
+                  {{ r.zoho_sync_status.value }}
+                </span>
+                {% if r.sync_attempt_count and r.sync_attempt_count > 1 %}
+                  <span class="text-[10px] text-stone-400" title="number of push attempts">
+                    ×{{ r.sync_attempt_count }}
+                  </span>
+                {% endif %}
+                {% if is_owner and r.zoho_sync_status.value in ('failed', 'pending', 'not_configured', 'skipped') %}
+                  <form method="post"
+                        action="/inventory/adjustments/{{ r.id }}/sync"
+                        class="inline"
+                        data-testid="adjustment-retry-form-{{ r.id }}">
+                    <button class="text-[10px] text-stone-500 hover:text-stone-900 underline decoration-stone-300 hover:decoration-stone-900"
+                            title="Re-attempt sync to Zoho through the integration service">
+                      Retry
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+              {% if r.zoho_reference %}
+                <div class="text-[10px] text-stone-500 font-mono mt-0.5"
+                     data-testid="adjustment-zoho-ref-{{ r.id }}">
+                  ref {{ r.zoho_reference }}
+                </div>
+              {% endif %}
+              {% if r.zoho_sync_warning %}
+                <div class="text-[10px] text-amber-700 mt-0.5 max-w-xs"
+                     data-testid="adjustment-warning-{{ r.id }}"
+                     title="{{ r.zoho_sync_warning }}">
+                  ⚠ {{ r.zoho_sync_warning }}
+                </div>
+              {% endif %}
+              {% if r.zoho_sync_error %}
+                <div class="text-[10px] text-red-700 mt-0.5 max-w-xs truncate"
+                     data-testid="adjustment-error-{{ r.id }}"
+                     title="{{ r.zoho_sync_error }}">
+                  {{ r.zoho_sync_error }}
+                </div>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}

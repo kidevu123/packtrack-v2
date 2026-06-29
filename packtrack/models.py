@@ -849,3 +849,12 @@ class InventoryAdjustment(SQLModel, table=True):
     reversal_of_adjustment_id: int | None = Field(
         default=None, foreign_key="inventory_adjustments.id",
     )
+
+    # v2.10.0 — sync metadata. ``zoho_sync_warning`` holds non-fatal
+    # signals from zoho-integration-service (currently the
+    # ``STOCK_DRIFT_DETECTED`` warning when its read of Zoho's quantity
+    # disagrees with our ``quantity_before``). ``sync_attempt_count``
+    # increments on every push attempt — initial + every retry — so the
+    # history UI can flag rows that are failing repeatedly.
+    zoho_sync_warning: str | None = None
+    sync_attempt_count: int = Field(default=0)
