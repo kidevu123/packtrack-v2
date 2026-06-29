@@ -23,11 +23,13 @@ from packtrack.models import (
     AdjustmentDirection,
     AdjustmentMode,
     AdjustmentReason,
+    InventoryAdjustment,
     Item,
     Role,
     User,
     ZohoSyncStatus,
 )
+from packtrack.services.inventory_adjustment_sync import try_sync_adjustment
 from packtrack.services.inventory_adjustments import (
     REASON_LABELS,
     AdjustmentError,
@@ -174,11 +176,22 @@ def submit_adjustment(
                 "submitted_notes": notes,
             },
         )
+
+    # v2.10.0 — attempt the Zoho sync immediately after the local
+    # commit. PackTrack is the source of truth: if Zoho fails, the
+    # ledger row stays and the operator gets a Retry button in
+    # history. Status is PENDING when configured; this call advances it
+    # to SYNCED / FAILED / SKIPPED. NOT_CONFIGURED rows are left alone.
+    sync_outcome = try_sync_adjustment(
+        session, result.adjustment, item, actor=user,
+    )
+    sync_status = sync_outcome.to_status()
+
     return RedirectResponse(
         url=(
             f"/inventory/{item.id}/adjustments"
             f"?saved={result.adjustment.adjustment_number}"
-            f"&sync_status={result.sync_status.value}"
+            f"&sync_status={sync_status.value}"
         ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
@@ -270,4 +283,53 @@ def global_adjustment_history(
             "sync_status_choices": [(s.value, s.value.replace("_", " ").title()) for s in ZohoSyncStatus],
             "global_view": True,
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Retry sync (v2.10.0)
+# ---------------------------------------------------------------------------
+#
+# Owner-only. Re-runs the integration-service push for a single
+# adjustment row that is FAILED / NOT_CONFIGURED / PENDING / SKIPPED.
+# The orchestrator no-ops on SYNCED rows (returns the existing
+# reference); the route surfaces that as a friendly flash, not an
+# error. Idempotency is preserved by reusing the original
+# adjustment.idempotency_key — so even if the previous attempt
+# succeeded upstream but the connection dropped before we got the
+# response, the retry will receive the SYNCED_IDEMPOTENT outcome
+# and mark the row SYNCED with the right reference.
+
+
+@router.post(
+    "/inventory/adjustments/{adjustment_id:int}/sync",
+    response_class=HTMLResponse,
+)
+def retry_adjustment_sync(
+    adjustment_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    _require_owner(user)
+    adjustment = session.get(InventoryAdjustment, adjustment_id)
+    if adjustment is None:
+        raise HTTPException(status_code=404)
+    item = session.get(Item, adjustment.item_id)
+    if item is None:
+        # Defensive — an adjustment shouldn't outlive its item, but if
+        # it does we don't want a 500. Tell the operator and stop.
+        raise HTTPException(
+            status_code=409,
+            detail="Adjustment's item no longer exists; cannot sync.",
+        )
+
+    outcome = try_sync_adjustment(session, adjustment, item, actor=user)
+    return RedirectResponse(
+        url=(
+            f"/inventory/{item.id}/adjustments"
+            f"?saved={adjustment.adjustment_number}"
+            f"&sync_status={outcome.to_status().value}"
+            f"&retry=1"
+        ),
+        status_code=status.HTTP_303_SEE_OTHER,
     )

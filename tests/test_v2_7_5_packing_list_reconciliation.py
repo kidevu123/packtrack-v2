@@ -214,8 +214,10 @@ def test_alembic_head_is_v2_7_5_revision():
     heads = sd.get_heads()
     assert len(heads) == 1, f"expected 1 head, got {heads}"
     # v2.9.0 advanced this from f2g3h4i5j6k7 (v2.7.5) to g3h4i5j6k7l8
-    # by adding the inventory_adjustments table.
-    assert heads[0] == "g3h4i5j6k7l8"
+    # by adding the inventory_adjustments table. v2.10.0 advanced it
+    # again to h4i5j6k7l8m9 by adding the sync_warning + attempt_count
+    # columns.
+    assert heads[0] == "h4i5j6k7l8m9"
 
 
 def test_receive_packing_list_line_row_roundtrips(session):

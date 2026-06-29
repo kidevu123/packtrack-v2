@@ -1,6 +1,36 @@
 # Current Phase Status
 
-## v2.9.0 — Inventory adjustments ledger: PackTrack as local source of truth (feature branch, NOT yet deployed)
+## v2.10.0 — Inventory adjustment → Zoho sync through zoho-integration-service v1.34.0 (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-adjustment-zoho-sync` (off `origin/main`, in a separate worktree so the master-data editor branch `feature/inventory-masterdata-editor-v2.8.0` @ `b643b4e` stays untouched). |
+| **Alembic head** | `h4i5j6k7l8m9` (advances from v2.9.0's `g3h4i5j6k7l8`). Adds two nullable columns to `inventory_adjustments`. Additive only. |
+| **Service contract** | `POST {ZOHO_INTEGRATION_BASE_URL}/zoho/pack_track/items/{zoho_item_id}/inventory-adjustments`, Bearer + X-Brand + Idempotency-Key. |
+| **Status** | Code complete; tests green (382 passed; +24 over v2.9.0's 358); **not merged, not deployed, not tagged**. |
+
+**v2.10.0 scope** — wires the v2.9.0 immutable adjustment ledger to the deployed zoho-integration-service v1.34.0 endpoint. PackTrack remains the source of truth: local commit happens first, and a failed Zoho sync NEVER rolls back the local stock.
+
+* **Three-module architecture** so the source-level guards stay clean:
+  * `packtrack/services/inventory_adjustments.py` — **unchanged from v2.9.0**, still no httpx / no Zoho / no OAuth import. Pure local ledger.
+  * `packtrack/services/zoho_adjustment_client.py` — **new**, the only PackTrack module that makes an HTTP call related to adjustments. Hits exactly one URL pattern. Returns a `SyncOutcome`.
+  * `packtrack/services/inventory_adjustment_sync.py` — **new** orchestrator. Decides whether to call the client (config + zoho_item_id gate), persists the outcome on the row, increments `sync_attempt_count`. Refuses to re-push a row already in `SYNCED`.
+* **Adjustment-submit route** now calls `try_sync_adjustment` immediately after `create_adjustment` returns. Status transitions: `NOT_CONFIGURED` (config off) / `PENDING` → `SYNCED` (service ok=true) / `FAILED` (HTTP error / timeout / 4xx / 5xx) / `SKIPPED` (item has no `zoho_item_id`).
+* **Retry route** — `POST /inventory/adjustments/{id}/sync`, owner-only. Reuses the same `idempotency_key` from the original attempt so the integration service deduplicates safely. No-op on rows already `SYNCED`. Visible as a "Retry" button in the per-item and global history tables for rows in `FAILED` / `PENDING` / `NOT_CONFIGURED` / `SKIPPED`.
+* **Drift warning surfaced, never hidden** — `STOCK_DRIFT_DETECTED` from the service is stored in the new `zoho_sync_warning` column and rendered as an amber "⚠ …" line beside the sync status. The adjustment is still marked SYNCED if the service responded `ok=true` (the post happened upstream; the warning is just signal for the operator to investigate).
+* **Sync metadata migration** (`h4i5j6k7l8m9`, additive):
+  * `zoho_sync_warning TEXT NULL` — for `STOCK_DRIFT_DETECTED` and any future non-fatal signal
+  * `sync_attempt_count INTEGER NOT NULL DEFAULT 0` — bumps on every real attempt (initial + every retry), surfaced as "×N" in history
+* **Network discipline** — Decimal quantities are sent as 4-decimal-place strings via `_decimal_str`; no float ever crosses the wire. The payload is a closed dict that names exactly the contract fields — no `vendor`, `price`, `sku`, `sku_code`, `account`, `account_id`, `tags`, `category`, `stock_override`, `name`, `material_code`, or `unit`. Bearer is logged only by the integration service, never by PackTrack (verified by a guard test that ensures the token doesn't show up in the stored `zoho_sync_error`).
+* **Existing v2.9.0 contract preserved** — `services/inventory_adjustments.py` still imports no Zoho/OAuth/HTTP client symbol (the v2.9.0 guard test passes unchanged). The new client lives in a separate module and is the only door to the network.
+
+**Tests (+24 cases, total 382)** in `tests/test_v2_10_0_adjustment_zoho_sync.py`: config disabled → no HTTP + NOT_CONFIGURED · happy SYNCED path · exact payload shape (URL / Bearer / X-Brand / Idempotency-Key / 4dp strings / no master-data fields) · `build_payload` Decimal-only assertion · no-`zoho_item_id` → SKIPPED · HTTP 401/403/404/409/422/500 → FAILED with the right substring · timeout → FAILED · idempotent replay (`meta.idempotent=true`) → SYNCED with reference · STOCK_DRIFT_DETECTED warning stored + still SYNCED · owner retry of FAILED row → SYNCED via the route · retry reuses the same `idempotency_key` · non-owner retry 403 · retry on SYNCED row is a no-op (no HTTP call) · `sync_attempt_count` increments per real attempt · Bearer never leaks to the stored error · client module imports no `zoho.com` / `oauth` / `access_token` literal · neither new module mentions Receiving · master-data fields unchanged after a sync round-trip · `is_configured()` requires all four flags · `push_adjustment_to_zoho` raises on programmer-error item id mismatch.
+
+**Hard contract preserved.** No Receiving file changed. PackTrack still never calls Zoho directly. The integration service is the sole seam. Local stock is never rolled back on Zoho failure. Adjustment rows remain immutable — there is still no PATCH / PUT / DELETE route for the row data itself; the retry route only writes to the sync-status columns.
+
+---
+
+## v2.9.0 — Inventory adjustments ledger: PackTrack as local source of truth (deployed + tagged via merge into main)
 
 | | |
 |---|---|

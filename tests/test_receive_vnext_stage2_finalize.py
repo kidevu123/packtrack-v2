@@ -669,9 +669,11 @@ def test_alembic_head_unchanged():
     v2.5.0 Stage 2 had no migration (head was ``e1f2a3b4c5d7``).
     v2.7.5 adds ``receive_packing_list_lines`` so the head advances to
     ``f2g3h4i5j6k7``. v2.9.0 adds ``inventory_adjustments`` so the
-    head advances again to ``g3h4i5j6k7l8``. There must still be exactly
-    one head — branches here mean two migrations created in parallel
-    without a merge rev.
+    head advances again to ``g3h4i5j6k7l8``. v2.10.0 adds
+    ``zoho_sync_warning`` + ``sync_attempt_count`` columns on
+    ``inventory_adjustments`` so the head advances to ``h4i5j6k7l8m9``.
+    There must still be exactly one head — branches here mean two
+    migrations created in parallel without a merge rev.
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -679,7 +681,7 @@ def test_alembic_head_unchanged():
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = sd.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "g3h4i5j6k7l8"
+    assert heads[0] == "h4i5j6k7l8m9"
 
 
 # ---------------------------------------------------------------------------
