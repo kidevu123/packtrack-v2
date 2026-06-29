@@ -46,7 +46,7 @@
           {% endif %}
         </div>
         <div class="flex items-center gap-4 mt-1 text-sm text-stone-500 flex-wrap">
-          <span>{{ m.vendor_name or '—' }}</span>
+          <span>{{ vendor_for[m.zoho_purchaseorder_id] if vendor_for and m.zoho_purchaseorder_id in vendor_for else (m.vendor_name or 'Vendor unknown') }}</span>
           <span class="text-stone-300">·</span>
           <span>{{ (m.line_items or []) | length }} line{{ 's' if (m.line_items or []) | length != 1 }}</span>
           {% if m.date %}<span class="text-stone-300">·</span><span>{{ m.date }}</span>{% endif %}

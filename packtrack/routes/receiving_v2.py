@@ -47,11 +47,13 @@ from packtrack.models import (
 )
 from packtrack.services.receiving_v2 import (
     generate_receive_number,
+    is_test_receive,
     items_for_po,
     make_submission_id,
     next_case_sequence,
     po_item_choices,
     receive_cases,
+    test_receive_marker_text,
     totals_by_item,
 )
 
@@ -253,6 +255,8 @@ def view_receive(
             "totals": totals,
             "packing_list": packing_list,
             "choices": choices,
+            "marked_test_banner": is_test_receive(rec),
+            "marker_text": test_receive_marker_text(rec),
         },
     )
 
@@ -585,6 +589,8 @@ def review_receive(
             "blockers": blockers,
             "warnings": warnings,
             "can_finalize": not blockers,
+            "marked_test_banner": is_test_receive(rec),
+            "marker_text": test_receive_marker_text(rec),
         },
     )
 
@@ -638,6 +644,8 @@ def finalize_receive(
             "po": po,
             "outcome": outcome,
             "boxes": boxes,
+            "marked_test_banner": is_test_receive(rec),
+            "marker_text": test_receive_marker_text(rec),
         },
     )
 
@@ -680,7 +688,8 @@ def retry_push(
             "po": po,
             "outcome": outcome,
             "boxes": boxes,
-            "marked_test_banner": (rec.notes or "").find("[Marked as TEST/CANARY") != -1,
+            "marked_test_banner": is_test_receive(rec),
+            "marker_text": test_receive_marker_text(rec),
         },
     )
 
@@ -804,6 +813,7 @@ def mark_receive_as_test(
             "outcome": None,  # no push happened in this action
             "boxes": boxes,
             "marked_test_banner": True,
+            "marker_text": test_receive_marker_text(rec),
         },
     )
 

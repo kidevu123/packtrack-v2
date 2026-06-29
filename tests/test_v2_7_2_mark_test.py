@@ -316,8 +316,10 @@ def test_mark_test_happy_path_records_event_and_does_not_call_externals(
     assert "External Zoho/Luma records were NOT reversed" in (rec.notes or "")
 
     # 5. Result page UI carries the test/canary banner.
+    # v2.7.4 normalized the banner copy to lowercase "external"; assert on
+    # a stable substring that matches both old and new wording.
     assert "Test / canary receive" in r.text
-    assert "External Zoho and Luma records were NOT reversed" in r.text
+    assert "Zoho and Luma records were NOT reversed" in r.text
 
 
 def test_result_page_banner_visible_on_subsequent_render(

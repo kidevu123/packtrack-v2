@@ -26,15 +26,7 @@
      secondary=[{"label":"← Back to receive","href":"/receive/v2/" ~ receive.id}],
 ) }}
 
-{% if marked_test_banner %}
-<div class="border rounded-2xl p-4 shadow-sm mb-5 bg-amber-50 border-amber-200 text-amber-900">
-  <p class="text-sm font-semibold">⚠ Test / canary receive</p>
-  <p class="mt-1 text-xs">
-    This receive has been marked as a test or canary. <strong>External Zoho and Luma records were NOT reversed</strong> — they remain in those systems as honest history.
-    The PT-side notes and POEvent log have the full marker audit trail.
-  </p>
-</div>
-{% endif %}
+{% include "receive_v2/_test_banner.html" %}
 
 <div class="border rounded-2xl p-4 shadow-sm mb-5 {{ _banner_class }}">
   <p class="text-sm font-medium">{{ _banner_msg }}</p>

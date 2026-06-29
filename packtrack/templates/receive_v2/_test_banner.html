@@ -1,0 +1,16 @@
+{# Shared test/canary banner. Render when ``marked_test_banner`` is truthy.
+   ``marker_text`` is the exact "[Marked as TEST/CANARY by ... at ...] — ..." line
+   from Receive.notes — passed in by the route so the operator sees who, when,
+   and why without flipping to the notes/event log. #}
+{% if marked_test_banner %}
+<div class="border rounded-2xl p-4 shadow-sm mb-5 bg-amber-50 border-amber-200 text-amber-900">
+  <p class="text-sm font-semibold">⚠ Test / canary receive — external Zoho and Luma records were NOT reversed.</p>
+  {% if marker_text %}
+    <p class="mt-1 text-[11px] text-amber-900/80 font-mono">{{ marker_text }}</p>
+  {% else %}
+    <p class="mt-1 text-xs">
+      The PT-side notes and POEvent log carry the full marker audit trail. External Zoho/Luma records remain in those systems as honest history.
+    </p>
+  {% endif %}
+</div>
+{% endif %}
