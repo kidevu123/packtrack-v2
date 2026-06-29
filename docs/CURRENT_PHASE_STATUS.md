@@ -1,6 +1,29 @@
 # Current Phase Status
 
-## v2.7.4 — Receiving vNext polish: visible canary banner + remaining-qty labels + vendor fallback (feature branch, NOT yet deployed)
+## v2.7.5 — Receiving MVP: manual packing-list reconciliation + activity strip (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-vnext-v2.7.5-mvp-reconciliation` (off `origin/main`, in a separate worktree so the v2.8.0 inventory/master-data WIP in the main repo stays untouched). |
+| **Alembic head** | `f2g3h4i5j6k7` (advances from Stage 1's `e1f2a3b4c5d7`). Adds `receive_packing_list_lines` only — additive. |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production. |
+| **Status** | Code complete; tests green (306 passed; +26 over v2.7.4's 280); **not merged, not deployed, not tagged**. |
+
+**v2.7.5 scope** — next spreadsheet-replacement layer, no file parsing yet:
+
+* **Manual packing-list expected lines** — new `ReceivePackingListLine(receive_id, item_id, vendor_case_number?, expected_quantity, unit?, note?, source='manual', created_at, created_by_user_id?)` plus Alembic migration. Operator-entered "what the vendor said is in this shipment". Source is always `"manual"` for now — CSV/PDF/OCR parsing comes after real vendor sample files land.
+* **Expected-lines UI on `/receive/v2/{id}`** — add-line form (PO-scoped item select, qty, unit, vendor case#, note), table of current expected lines, per-row delete, OWNER + RECEIVING perms, feature-flag gated. Form/Delete are 409-blocked once the receive enters a terminal status (`finalized`/`pushed_ok`/`push_failed`/`cancelled`) so the audit trail stays honest.
+* **Review reconciliation** — new `services/receiving_v2_reconcile.py::build_reconciliation_report` groups by `item_id` and classifies each as `Match` / `Short` / `Over` / `Unexpected` / `Missing` with operator-friendly messages ("Mailer: packing list expected 100 pcs, you counted 95 pcs — short 5 pcs."). Rendered as a card on `/receive/v2/{id}/review`. **Warnings only — never blockers.** `validate_receive_for_finalize` is unchanged; Zoho/Luma payloads still use actual counted `ReceiveCaseLine` totals.
+* **Recent activity strip** — `receive_activity()` filters this PO's `POEvent` rows to receive-lifecycle kinds (`receive_packing_list_uploaded`, `receive_marked_test`, `receive_finalized`, `receive_pushed_*`, `receive_expected_line_added`/`_deleted`) so the operator can see "what happened" without digging into the PO page. Rendered on both index and review.
+* **UX hints** — `po_item_choices(..., expected_by_item=…)` opt-in adds `expected M unit` to the case-line `<select>` labels when the operator has entered expected lines.
+
+**Tests (+26 cases, total 306)** in `tests/test_v2_7_5_packing_list_reconciliation.py`: migration head pin; row roundtrip; OWNER/DESIGN/flag-off perms; empty + populated table render; delete; read-only after finalize; Match/Short/Over/Unexpected/Missing classification; review card render; `validate_receive_for_finalize` unaffected; CRUD creates no BoxReceipts; CRUD does not change `ReceiveCaseLine`; packing-list upload still reachable; canary banner regression; legacy `/receive` regression; `po_item_choices` expected-label opt-in + opt-out; activity-strip POEvent emission; activity-strip filtering to receive-lifecycle kinds; operator-friendly copy.
+
+**Hard contract preserved.** No Zoho payload change. No Luma payload change. No finalize semantics change. No real receive data mutation. No packing-list file parsing. No OCR. No vendor portal. No multi-PO receiving. Feature flag default unchanged. v2.8.0 WIP on `feature/inventory-masterdata-editor-v2.8.0` not touched.
+
+---
+
+## v2.7.4 — Receiving vNext polish: visible canary banner + remaining-qty labels + vendor fallback (deployed + tagged via merge into main)
 
 | | |
 |---|---|

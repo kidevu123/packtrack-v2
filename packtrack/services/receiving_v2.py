@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from packtrack.models import (
     Item,
+    POEvent,
     POLine,
     PurchaseOrder,
     Receive,
@@ -82,7 +83,12 @@ class POItemChoice:
     label: str
 
 
-def po_item_choices(session: Session, po_id: int) -> list[POItemChoice]:
+def po_item_choices(
+    session: Session,
+    po_id: int,
+    *,
+    expected_by_item: dict[int, float] | None = None,
+) -> list[POItemChoice]:
     """Item choices for the case-line ``<select>``, scoped to the PO's lines.
 
     One option per (item, po_line) pair, ordered by item name. The
@@ -97,6 +103,12 @@ def po_item_choices(session: Session, po_id: int) -> list[POItemChoice]:
     mirror has no line for the item OR the item has no
     ``zoho_item_id``, falls back to ``POLine.received_quantity`` and
     finally to "remaining unknown".
+
+    Optional ``expected_by_item`` is a ``{item_id: expected_qty}`` map
+    derived from this receive's manual packing-list expected lines (see
+    ``ReconciliationReport.expected_for_item``). When provided, the
+    label appends ``expected M <unit>`` so operators see the vendor's
+    declared total inline with the case-line select.
     """
     rows = session.exec(
         select(Item, POLine)
@@ -144,6 +156,9 @@ def po_item_choices(session: Session, po_id: int) -> list[POItemChoice]:
             bits.append(f"{int(ordered):,}{unit_suffix} ordered")
         else:
             bits.append("remaining unknown")
+        if expected_by_item and item.id in expected_by_item:
+            exp = expected_by_item[item.id]
+            bits.append(f"expected {int(exp) if exp == int(exp) else exp:g}{unit_suffix}")
         out.append(POItemChoice(item_id=item.id, label=" · ".join(bits)))
     return out
 
@@ -287,3 +302,49 @@ def test_receive_marker_text(receive: Receive | None) -> str | None:
         if line.startswith(_TEST_MARKER_PREFIX):
             return line
     return None
+
+
+# ---------------------------------------------------------------------------
+# Activity strip (v2.7.5) — surface the recent POEvents that touch this
+# receive so the operator can see "what happened" without digging into the
+# PO page.
+# ---------------------------------------------------------------------------
+
+
+_RECEIVE_EVENT_KINDS = frozenset({
+    "receive_packing_list_uploaded",
+    "receive_marked_test",
+    "receive_finalized",
+    "receive_pushed_ok",
+    "receive_pushed_failed",
+    "receive_pushed_partial",
+    "receive_expected_line_added",
+    "receive_expected_line_deleted",
+})
+
+
+def receive_activity(
+    session: Session, receive: Receive, *, limit: int = 12,
+) -> list[POEvent]:
+    """Recent receive-relevant ``POEvent`` rows on this receive's PO,
+    newest first.
+
+    Filtered to the kinds we actually emit for receive lifecycle so the
+    strip stays signal-only and doesn't fill up with unrelated PO chatter
+    (status changes, comments, etc.). Returns at most ``limit`` rows.
+    Events for *other* receives on the same PO show through here too —
+    that's intentional, since "what happened on this PO recently" is the
+    operator's mental model.
+    """
+    if receive.purchase_order_id is None:
+        return []
+    rows = session.exec(
+        select(POEvent)
+        .where(
+            POEvent.po_id == receive.purchase_order_id,
+            POEvent.kind.in_(tuple(_RECEIVE_EVENT_KINDS)),
+        )
+        .order_by(POEvent.created_at.desc(), POEvent.id.desc())
+        .limit(limit)
+    ).all()
+    return rows

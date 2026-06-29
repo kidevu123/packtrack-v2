@@ -705,3 +705,32 @@ class ReceiveCaseLine(SQLModel, table=True):
     box_receipt_id: int | None = Field(default=None, foreign_key="box_receipts.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ReceivePackingListLine(SQLModel, table=True):
+    """Manual packing-list expected line for a Receive.
+
+    Operator-entered "what the vendor said is in this shipment" — used by
+    the review reconciliation to flag short/over/missing/unexpected
+    counts against the actual ``ReceiveCaseLine`` totals. Independent of
+    the packing-list ``Attachment`` (the uploaded file remains a
+    reference; v2.7.5 does no parsing — ``source`` is always
+    ``"manual"`` for now).
+
+    Reconciliation is advisory only: differences surface as warnings on
+    review, never as finalize blockers, and the Zoho/Luma payloads
+    continue to use actual counted ``ReceiveCaseLine`` totals.
+    """
+
+    __tablename__ = "receive_packing_list_lines"
+
+    id: int | None = Field(default=None, primary_key=True)
+    receive_id: int = Field(foreign_key="receives.id", index=True)
+    item_id: int = Field(foreign_key="items.id", index=True)
+    vendor_case_number: str | None = Field(default=None, max_length=120)
+    expected_quantity: float
+    unit: str | None = Field(default=None, max_length=20)
+    note: str | None = None
+    source: str = Field(default="manual", max_length=20)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by_user_id: int | None = Field(default=None, foreign_key="users.id")

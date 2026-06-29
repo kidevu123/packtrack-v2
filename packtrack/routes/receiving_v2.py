@@ -40,6 +40,7 @@ from packtrack.models import (
     Receive,
     ReceiveCase,
     ReceiveCaseLine,
+    ReceivePackingListLine,
     ReceiveStatus,
     Role,
     ShipmentKind,
@@ -52,9 +53,13 @@ from packtrack.services.receiving_v2 import (
     make_submission_id,
     next_case_sequence,
     po_item_choices,
+    receive_activity,
     receive_cases,
     test_receive_marker_text,
     totals_by_item,
+)
+from packtrack.services.receiving_v2_reconcile import (
+    build_reconciliation_report,
 )
 
 router = APIRouter(prefix="/receive/v2")
@@ -241,7 +246,24 @@ def view_receive(
         if rec.packing_list_attachment_id
         else None
     )
-    choices = po_item_choices(session, rec.purchase_order_id) if rec.purchase_order_id else []
+    expected_lines = _load_expected_lines(session, rec.id)
+    expected_items_lookup = {
+        ex.item_id: session.get(Item, ex.item_id) for ex in expected_lines
+    }
+    reconciliation = build_reconciliation_report(session, rec)
+    expected_by_item = {
+        r.item_id: r.expected_quantity for r in reconciliation.rows
+        if r.expected_quantity > 0
+    }
+    choices = (
+        po_item_choices(
+            session, rec.purchase_order_id,
+            expected_by_item=expected_by_item,
+        )
+        if rec.purchase_order_id else []
+    )
+    activity = receive_activity(session, rec)
+    is_editable = _expected_lines_editable(rec)
     return _render(
         request,
         "receive_v2/index.html",
@@ -255,6 +277,11 @@ def view_receive(
             "totals": totals,
             "packing_list": packing_list,
             "choices": choices,
+            "expected_lines": expected_lines,
+            "expected_items_lookup": expected_items_lookup,
+            "expected_editable": is_editable,
+            "reconciliation": reconciliation,
+            "activity": activity,
             "marked_test_banner": is_test_receive(rec),
             "marker_text": test_receive_marker_text(rec),
         },
@@ -577,6 +604,8 @@ def review_receive(
     blockers, warnings = validate_receive_for_finalize(session, rec)
     cases = receive_cases(session, rec.id)
     totals = totals_by_item(session, rec.id)
+    reconciliation = build_reconciliation_report(session, rec)
+    activity = receive_activity(session, rec)
     return _render(
         request,
         "receive_v2/review.html",
@@ -588,6 +617,8 @@ def review_receive(
             "totals": totals,
             "blockers": blockers,
             "warnings": warnings,
+            "reconciliation": reconciliation,
+            "activity": activity,
             "can_finalize": not blockers,
             "marked_test_banner": is_test_receive(rec),
             "marker_text": test_receive_marker_text(rec),
@@ -943,6 +974,179 @@ def upload_receive_packing_list(
 
     # Redirect back to the receive page so the operator sees the
     # attached state immediately.
+    return RedirectResponse(
+        url=f"/receive/v2/{rec.id}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Manual packing-list expected lines (v2.7.5 MVP — no file parsing)
+# ---------------------------------------------------------------------------
+#
+# Operators key the vendor's declared shipment contents into
+# ``ReceivePackingListLine``; the review page reconciles those expected
+# totals against actual ``ReceiveCaseLine`` counts and surfaces
+# differences as warnings (never blockers). The uploaded packing-list
+# file remains a reference attachment — v2.7.5 does no parsing.
+
+
+_FINALIZED_STATUSES = {
+    ReceiveStatus.FINALIZED,
+    ReceiveStatus.PUSHED_OK,
+    ReceiveStatus.PUSH_FAILED,
+    ReceiveStatus.CANCELLED,
+}
+
+
+def _expected_lines_editable(rec: Receive) -> bool:
+    """Expected lines may be added/deleted only before the receive enters
+    a terminal status. Keeps the post-push audit trail honest."""
+    return rec.status not in _FINALIZED_STATUSES
+
+
+def _load_expected_lines(
+    session: Session, receive_id: int,
+) -> list[ReceivePackingListLine]:
+    from sqlmodel import select as _select
+    return session.exec(
+        _select(ReceivePackingListLine)
+        .where(ReceivePackingListLine.receive_id == receive_id)
+        .order_by(ReceivePackingListLine.id)
+    ).all()
+
+
+def _coerce_float(raw: str, *, field_name: str) -> float:
+    try:
+        v = float((raw or "").strip())
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} must be a number.",
+        ) from None
+    if v <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} must be greater than zero.",
+        )
+    return v
+
+
+@router.post("/{receive_id}/expected-lines", response_class=HTMLResponse)
+def add_expected_line(
+    request: Request,
+    receive_id: int,
+    item_id: str = Form(""),
+    expected_quantity: str = Form(""),
+    unit: str = Form(""),
+    vendor_case_number: str = Form(""),
+    note: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Add one manual expected packing-list line. OWNER + RECEIVING."""
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if not _expected_lines_editable(rec):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Receive is finalized — expected lines are read-only.",
+        )
+    try:
+        iid = int(item_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pick an item.",
+        ) from None
+    item = session.get(Item, iid)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found.")
+    # PO-scope check: same constraint as case-line entry.
+    if rec.purchase_order_id is not None:
+        on_po = session.exec(
+            __import__("sqlmodel").select(POLine).where(
+                POLine.po_id == rec.purchase_order_id,
+                POLine.item_id == iid,
+            )
+        ).first()
+        if on_po is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{item.name} is not on this PO.",
+            )
+
+    qty = _coerce_float(expected_quantity, field_name="Expected quantity")
+    unit_clean = (unit or "").strip()[:20] or (item.unit or None)
+    line = ReceivePackingListLine(
+        receive_id=rec.id,
+        item_id=iid,
+        vendor_case_number=(vendor_case_number or "").strip()[:120] or None,
+        expected_quantity=qty,
+        unit=unit_clean,
+        note=(note or "").strip() or None,
+        source="manual",
+        created_by_user_id=user.id,
+    )
+    session.add(line)
+    if rec.purchase_order_id is not None:
+        session.add(POEvent(
+            po_id=rec.purchase_order_id,
+            kind="receive_expected_line_added",
+            message=(
+                f"Expected line added to Receive {rec.receive_number}: "
+                f"{item.name} {qty:g} {unit_clean or ''}".rstrip()
+            ),
+            actor_id=user.id,
+        ))
+    _bump_updated(rec)
+    session.commit()
+    return RedirectResponse(
+        url=f"/receive/v2/{rec.id}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post(
+    "/{receive_id}/expected-lines/{line_id}/delete",
+    response_class=HTMLResponse,
+)
+def delete_expected_line(
+    request: Request,
+    receive_id: int,
+    line_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Delete an expected line before finalize. OWNER + RECEIVING."""
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if not _expected_lines_editable(rec):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Receive is finalized — expected lines are read-only.",
+        )
+    line = session.get(ReceivePackingListLine, line_id)
+    if line is None or line.receive_id != receive_id:
+        raise HTTPException(status_code=404, detail="Expected line not found.")
+    item = session.get(Item, line.item_id)
+    item_name = item.name if item else f"item {line.item_id}"
+    qty = float(line.expected_quantity or 0)
+    session.delete(line)
+    if rec.purchase_order_id is not None:
+        session.add(POEvent(
+            po_id=rec.purchase_order_id,
+            kind="receive_expected_line_deleted",
+            message=(
+                f"Expected line removed from Receive {rec.receive_number}: "
+                f"{item_name} {qty:g}"
+            ),
+            actor_id=user.id,
+        ))
+    _bump_updated(rec)
+    session.commit()
     return RedirectResponse(
         url=f"/receive/v2/{rec.id}",
         status_code=status.HTTP_303_SEE_OTHER,
