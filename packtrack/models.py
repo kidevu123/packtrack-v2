@@ -261,6 +261,24 @@ class PurchaseOrder(SQLModel, table=True):
 
 
 class POLine(SQLModel, table=True):
+    """One ordered-item line on a PurchaseOrder.
+
+    ``received_quantity`` semantics (IMPORTANT for reporting):
+
+    * **Legacy** ``/receive/{zoho_po_id}`` flow used to bump this when
+      a receive landed.
+    * **Receiving vNext** (v2.5.0+) **does NOT** bump
+      ``received_quantity``. The Zoho mirror's
+      ``ZohoMirror.line_items[].quantity_received`` is the
+      authoritative source for receive progress; ``BoxReceipt`` rows
+      with ``receive_id IS NOT NULL`` are the PT-side leaves.
+    * A report that uses ``POLine.received_quantity`` to compute "how
+      much has been received" will silently **under-report** for any
+      PO that has been received through vNext. Use either the mirror
+      or sum ``BoxReceipt.accepted_quantity WHERE receive_id IS NOT
+      NULL AND receive.status IN (FINALIZED, PUSHED_OK)`` instead.
+    """
+
     __tablename__ = "po_lines"
 
     id: int | None = Field(default=None, primary_key=True)

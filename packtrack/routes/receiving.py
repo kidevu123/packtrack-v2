@@ -20,6 +20,7 @@ from packtrack.models import (
     Item,
     LumaPushStatus,
     POEvent,
+    POLine,
     PurchaseOrder,
     Role,
     User,
@@ -88,12 +89,40 @@ def receiving_list(
         if po.zoho_po_id:
             linked[po.zoho_po_id] = po
 
+    # v2.7.4: per-mirror vendor display with fallback chain so cards
+    # never render bare "—". Priority:
+    #   1. ZohoMirror.vendor_name (when synced)
+    #   2. Common Item.vendor across the PO's lines (when ambiguous,
+    #      we just take the first non-empty; warehouse usually doesn't
+    #      need pixel-perfect attribution)
+    #   3. literal "Vendor unknown"
+    vendor_for: dict[str, str] = {}
+    for m in mirrors:
+        zoho_po_id = m.zoho_purchaseorder_id
+        if not zoho_po_id:
+            continue
+        name = (m.vendor_name or "").strip()
+        if not name:
+            po = linked.get(zoho_po_id)
+            if po is not None:
+                # Pull the first non-empty Item.vendor on this PO's lines.
+                line_vendor = session.exec(
+                    select(Item.vendor)
+                    .join(POLine, POLine.item_id == Item.id)
+                    .where(POLine.po_id == po.id)
+                    .where(Item.vendor.is_not(None))
+                ).first()
+                if line_vendor and (line_vendor or "").strip():
+                    name = line_vendor.strip()
+        vendor_for[zoho_po_id] = name or "Vendor unknown"
+
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "receiving_list.html",
         {
             "user": user, "mirrors": mirrors, "linked": linked,
             "vnext_enabled": settings.RECEIVING_VNEXT_ENABLED,
+            "vendor_for": vendor_for,
         },
     )
 

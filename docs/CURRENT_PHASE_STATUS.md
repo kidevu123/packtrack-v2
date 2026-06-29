@@ -1,6 +1,28 @@
 # Current Phase Status
 
-## v2.7.3 — Receiving vNext: packing-list attachment + canary mark performed (feature branch, NOT yet deployed)
+## v2.7.4 — Receiving vNext polish: visible canary banner + remaining-qty labels + vendor fallback (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-vnext-v2.7.4-polish` (off `origin/main`, in a separate worktree so the v2.8.0 WIP in the main repo stays untouched) |
+| **Alembic head** | `e1f2a3b4c5d7` (unchanged — no schema changes in this release) |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production. |
+| **Status** | Code complete; tests green (280 passed; +14 over v2.7.3's 266); **not merged, not deployed, not tagged**. |
+
+**v2.7.4 scope** — focused UI/readability polish from the v2.7.3 readiness pass:
+
+* **Canary/test banner visible everywhere.** Centralized the `[Marked as TEST/CANARY` marker detection in `packtrack/services/receiving_v2.py` (`is_test_receive`, `test_receive_marker_text`) and extracted the banner into a shared partial `templates/receive_v2/_test_banner.html`. Now rendered on `/receive/v2/{id}` (index), `/receive/v2/{id}/review` (review), AND `result.html` (finalize/retry-push/mark) — previously only `result.html` had it, so an operator landing on a marked receive from the list could be unaware.
+* **Item-select labels show remaining.** `po_item_choices` now formats labels as `Item · MATERIAL_CODE · N <unit> remaining` (or `… ordered` when no receive info yet, `remaining unknown` when ordered quantity is 0). Remaining is computed from `ZohoMirror.line_items[].quantity_received` when available (mirror is authoritative under vNext), with graceful fallback to `POLine.received_quantity` then `remaining unknown`.
+* **Vendor fallback on `/receive` cards.** `receiving_list` route now computes a server-side `vendor_for: {zoho_purchaseorder_id -> vendor_label}` map with priority `mirror.vendor_name` → first non-null `Item.vendor` on the linked PO's lines → `"Vendor unknown"`. Template uses this map and no longer shows `—`.
+* **POLine docstring** documents the vNext semantics: `received_quantity` is NOT bumped by the vNext finalize path; reports must use `ZohoMirror.line_items[].quantity_received` or sum `BoxReceipt.accepted_quantity` over finalized receives.
+
+**Tests (+14 cases, total 280)** in `tests/test_v2_7_4_polish.py`: `is_test_receive` + marker text helpers; index banner shown when marked, hidden when unmarked; review banner shown when marked; `po_item_choices` mirror-based remaining qty with unit; POLine fallback when no mirror; zero-ordered → "remaining unknown"; vendor display (mirror name, Item.vendor fallback, "Vendor unknown"); legacy `/receive` regression with flag off; POLine docstring contains "Receiving vNext" + "received_quantity" + ("mirror" or "BoxReceipt"). One pre-existing v2.7.2 mark-test assertion adjusted to a stable substring `"Zoho and Luma records were NOT reversed"` because the v2.7.4 banner copy normalized capital-E to lowercase.
+
+**Hard contract preserved.** No schema change. No Zoho payload change. No Luma payload change. No finalize side effects. No real receive mutations. No packing-list parsing. Feature flag default unchanged. v2.8.0 WIP not touched.
+
+---
+
+## v2.7.3 — Receiving vNext: packing-list attachment + canary mark performed (deployed + tagged via merge into main)
 
 | | |
 |---|---|

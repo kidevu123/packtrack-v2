@@ -11,6 +11,8 @@
      secondary=[{"label":"← Back to receiving","href":"/receive"}],
 ) }}
 
+{% include "receive_v2/_test_banner.html" %}
+
 {# ── Status / header strip ───────────────────────────────────────────── #}
 <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
   {{ ui.summary_card(label="Status", value=receive.status.value|title, tone="info") }}
