@@ -31,6 +31,7 @@ from packtrack.routes import (
     inbox,
     internal,
     inventory,
+    inventory_adjustments,
     purchase_orders,
     receiving,
     receiving_v2,
@@ -162,6 +163,11 @@ app.include_router(auth.router)
 app.include_router(inbox.router)
 app.include_router(purchase_orders.router)
 app.include_router(inventory.router)
+# Inventory adjustments (v2.9.0) — must be registered AFTER inventory so
+# the static '/inventory/adjustments' path wins over the dynamic
+# '/inventory/{item_id:int}' route (FastAPI resolves in registration
+# order; the :int cast on the inventory route also helps).
+app.include_router(inventory_adjustments.router)
 app.include_router(receiving.router)
 # Receiving vNext (v2.5.0 Stage 1) — every route guarded by
 # settings.RECEIVING_VNEXT_ENABLED at the dependency layer, so when the

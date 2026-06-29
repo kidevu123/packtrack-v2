@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}
+  {%- if global_view -%}
+    Inventory adjustments · PackTrack
+  {%- else -%}
+    {{ item.name }} · Adjustments · PackTrack
+  {%- endif -%}
+{% endblock %}
+{% block container_class %}max-w-5xl{% endblock %}
+{% block content %}
+
+{% if global_view %}
+  {{ ui.page_header(
+       title="Inventory adjustments",
+       subtitle="Immutable movement ledger · PackTrack is local source of truth",
+       secondary=[
+         {"label": "← Inventory", "href": "/inventory"},
+       ],
+  ) }}
+{% else %}
+  {{ ui.page_header(
+       title="Adjustments · " ~ item.name,
+       subtitle=("SKU " ~ item.sku_code) if item.sku_code else (item.material_code or ""),
+       secondary=[
+         {"label": "← Item detail", "href": "/inventory/" ~ item.id},
+         {"label": "Inventory", "href": "/inventory"},
+       ],
+  ) }}
+{% endif %}
+
+{% if flash %}
+  <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 shadow-sm mb-5"
+       data-testid="adjust-saved-flash">
+    <p class="text-sm text-emerald-800">
+      Adjustment <span class="font-mono">{{ flash.adjustment_number }}</span> recorded.
+      Zoho sync: <span class="font-mono">{{ flash.sync_status }}</span>.
+    </p>
+  </div>
+{% endif %}
+
+{% if global_view %}
+  <form method="get"
+        action="/inventory/adjustments"
+        class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm mb-5 grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+    <label class="block sm:col-span-1">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Item id</span>
+      <input name="item_id" type="number" min="1" value="{{ filter_item.id if filter_item else '' }}"
+             class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+    </label>
+    <label class="block sm:col-span-1">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Reason</span>
+      <select name="reason"
+              class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+        <option value="">All</option>
+        {% for value, label in reasons %}
+          <option value="{{ value }}" {% if filter_reason == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="block sm:col-span-1">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Sync status</span>
+      <select name="sync_status"
+              class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+        <option value="">All</option>
+        {% for value, label in sync_status_choices %}
+          <option value="{{ value }}" {% if filter_sync_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="flex items-center gap-2 sm:col-span-1">
+      <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+        Filter
+      </button>
+      <a href="/inventory/adjustments" class="text-xs text-stone-500 hover:text-stone-900">Reset</a>
+    </div>
+  </form>
+{% endif %}
+
+{% if rows %}
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm" data-testid="adjustment-history-table">
+      <thead class="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-400">
+        <tr>
+          <th class="text-left font-semibold px-4 py-2">When</th>
+          <th class="text-left font-semibold px-4 py-2">Adjustment</th>
+          {% if global_view %}<th class="text-left font-semibold px-4 py-2">Item</th>{% endif %}
+          <th class="text-left font-semibold px-4 py-2">Reason</th>
+          <th class="text-right font-semibold px-4 py-2">Before</th>
+          <th class="text-right font-semibold px-4 py-2">Δ</th>
+          <th class="text-right font-semibold px-4 py-2">After</th>
+          <th class="text-left font-semibold px-4 py-2">Sync</th>
+        </tr>
+      </thead>
+      <tbody class="text-stone-700 divide-y divide-stone-100">
+        {% for r in rows %}
+          <tr data-testid="adjustment-row-{{ r.id }}">
+            <td class="px-4 py-2 whitespace-nowrap">
+              <div class="text-stone-700">{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+              <div class="text-[11px] text-stone-400">user #{{ r.created_by_user_id }}</div>
+            </td>
+            <td class="px-4 py-2 font-mono text-[11px]">
+              {{ r.adjustment_number }}
+              {% if r.reversal_of_adjustment_id %}
+                <div class="text-[10px] text-amber-700">reverses #{{ r.reversal_of_adjustment_id }}</div>
+              {% endif %}
+              {% if r.voided_at %}
+                <div class="text-[10px] text-red-700">voided</div>
+              {% endif %}
+            </td>
+            {% if global_view %}
+              <td class="px-4 py-2 min-w-0">
+                {% set linked = item_lookup.get(r.item_id) %}
+                {% if linked %}
+                  <a href="/inventory/{{ linked.id }}/adjustments" class="text-stone-900 hover:underline">
+                    {{ linked.name }}
+                  </a>
+                  {% if linked.material_code %}
+                    <div class="text-[11px] text-stone-400 font-mono">{{ linked.material_code }}</div>
+                  {% endif %}
+                {% else %}
+                  <span class="text-stone-400">item #{{ r.item_id }}</span>
+                {% endif %}
+              </td>
+            {% endif %}
+            <td class="px-4 py-2">
+              {{ reason_labels.get(r.reason_code, r.reason_code.value if r.reason_code.value is defined else r.reason_code) }}
+              {% if r.notes %}
+                <div class="text-[11px] text-stone-500 italic max-w-xs truncate" title="{{ r.notes }}">{{ r.notes }}</div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2 text-right tabular-nums">{{ r.quantity_before }}</td>
+            <td class="px-4 py-2 text-right tabular-nums {{ 'text-emerald-700' if r.quantity_delta > 0 else 'text-red-700' }}">
+              {% if r.quantity_delta > 0 %}+{% endif %}{{ r.quantity_delta }}
+            </td>
+            <td class="px-4 py-2 text-right tabular-nums font-medium">{{ r.quantity_after }}</td>
+            <td class="px-4 py-2">
+              <span class="text-[11px] font-mono uppercase tracking-wider
+                {%- if r.zoho_sync_status.value == 'synced' %} text-emerald-700
+                {%- elif r.zoho_sync_status.value == 'failed' %} text-red-700
+                {%- elif r.zoho_sync_status.value == 'pending' %} text-amber-700
+                {%- else %} text-stone-400{% endif %}">
+                {{ r.zoho_sync_status.value }}
+              </span>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+    {{ ui.empty_state(
+         title="No adjustments yet",
+         body="Owners can record stock corrections from the inventory list or item detail page.",
+    ) }}
+  </div>
+{% endif %}
+
+{% if not global_view and is_owner %}
+  <div class="mt-4">
+    <a href="/inventory/{{ item.id }}/adjust"
+       class="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800"
+       data-testid="adjust-quantity-link">
+      + Record adjustment
+    </a>
+  </div>
+{% endif %}
+
+{% endblock %}
