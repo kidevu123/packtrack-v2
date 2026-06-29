@@ -31,6 +31,11 @@
   {# ── Left: cases ─────────────────────────────────────────────────── #}
   <div class="lg:col-span-2">
 
+    {# Manual packing-list expected lines (v2.7.5) — feeds the review-page reconciliation. #}
+    <div class="mb-4">
+      {% include "receive_v2/_expected_lines.html" with context %}
+    </div>
+
     <div id="receive-cases" class="space-y-3">
       {% for case in cases %}
         {% include "receive_v2/_case_block.html" with context %}
@@ -118,6 +123,9 @@
         {% include "receive_v2/_totals.html" with context %}
       </div>
     </div>
+
+    {# Activity strip (v2.7.5) — recent receive-lifecycle events on this PO. #}
+    {% include "receive_v2/_activity_strip.html" with context %}
 
     {# Finalize placeholder #}
     <div class="bg-stone-50 border border-stone-200 rounded-2xl p-4 text-center">

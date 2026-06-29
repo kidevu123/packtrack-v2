@@ -1,0 +1,38 @@
+{# v2.7.5 — expected-vs-counted reconciliation card on the review page.
+   Warnings only — never blocks finalize. Zoho/Luma payloads still use
+   actual ReceiveCaseLine totals. #}
+<div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm" data-testid="reconciliation-card">
+  <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">
+    Packing list vs counted
+  </h2>
+  {% if not reconciliation.has_expected_lines %}
+    <p class="text-sm text-stone-500">No packing-list expected lines entered.</p>
+    <p class="text-[11px] text-stone-400 mt-1">
+      Add expected lines on the receive page to enable reconciliation.
+    </p>
+  {% elif not reconciliation.differences %}
+    <p class="text-sm text-emerald-700">✓ All packing-list items match the counts.</p>
+  {% else %}
+    <ul class="text-sm space-y-1.5" data-testid="reconciliation-list">
+      {% for r in reconciliation.differences %}
+        {% set tone_class = {
+             'short':       'text-amber-800',
+             'over':        'text-amber-800',
+             'unexpected':  'text-amber-800',
+             'missing':     'text-red-700',
+             'match':       'text-emerald-700',
+           }[r.status.value] %}
+        <li class="flex items-baseline gap-2">
+          <span class="text-[10px] uppercase tracking-wider shrink-0 {{ tone_class }}">
+            {{ r.status.value }}
+          </span>
+          <span class="{{ tone_class }}">{{ r.message }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="mt-2 text-[11px] text-stone-400">
+      These are warnings only. Finalize remains available; Zoho and Luma still
+      push the actual counted lines.
+    </p>
+  {% endif %}
+</div>

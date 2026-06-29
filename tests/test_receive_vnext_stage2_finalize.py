@@ -664,14 +664,20 @@ def test_legacy_receive_form_still_works(session, engine, monkeypatch):
 
 
 def test_alembic_head_unchanged():
-    """Stage 2 adds no migration; the head must still be the Stage 1 rev."""
+    """Pin the current single Alembic head so we notice silent schema drift.
+
+    v2.5.0 Stage 2 had no migration (head was ``e1f2a3b4c5d7``).
+    v2.7.5 adds ``receive_packing_list_lines`` so the head advances to
+    ``f2g3h4i5j6k7``. There must still be exactly one head — branches
+    here mean two migrations created in parallel without a merge rev.
+    """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = sd.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "e1f2a3b4c5d7"
+    assert heads[0] == "f2g3h4i5j6k7"
 
 
 # ---------------------------------------------------------------------------

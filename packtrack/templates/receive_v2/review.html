@@ -48,6 +48,9 @@
     </div>
     {% endif %}
 
+    {# Packing-list vs counted reconciliation (v2.7.5). Warnings only. #}
+    {% include "receive_v2/_reconciliation.html" with context %}
+
     <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
       <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Cases</h2>
       <ul class="text-sm text-stone-700 space-y-1">
@@ -66,6 +69,9 @@
       <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">Totals by item</h2>
       {% include "receive_v2/_totals.html" with context %}
     </div>
+
+    {# Activity strip (v2.7.5) #}
+    {% include "receive_v2/_activity_strip.html" with context %}
 
     <form method="post" action="/receive/v2/{{ receive.id }}/finalize" class="bg-stone-50 border border-stone-200 rounded-2xl p-4 space-y-3">
       {% if warnings %}

@@ -1,0 +1,22 @@
+{# v2.7.5 — recent receive-lifecycle POEvents. Signal-only, capped to the
+   most recent N receive_* events on this PO. #}
+<div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm" data-testid="activity-strip">
+  <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-2">
+    Recent activity
+  </h2>
+  {% if activity %}
+    <ul class="text-sm text-stone-700 space-y-1.5">
+      {% for ev in activity %}
+        <li class="flex items-baseline gap-2">
+          <span class="text-[10px] uppercase tracking-wider text-stone-400 shrink-0">
+            {{ ev.created_at.strftime('%b %d %H:%M') }}
+          </span>
+          <span class="font-mono text-[10px] text-stone-500 shrink-0">{{ ev.kind }}</span>
+          <span class="text-stone-700">{{ ev.message }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="text-sm text-stone-500">No recent activity yet.</p>
+  {% endif %}
+</div>

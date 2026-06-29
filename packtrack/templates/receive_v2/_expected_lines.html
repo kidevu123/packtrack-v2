@@ -1,0 +1,91 @@
+{# v2.7.5 — manual packing-list expected lines (no file parsing).
+   Rendered on /receive/v2/{id}. Read-only after the receive is
+   finalized/pushed/cancelled. #}
+<div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+  <div class="flex items-baseline justify-between mb-2">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400">
+      Packing list — expected lines
+    </h2>
+    <span class="text-[11px] text-stone-400">
+      {{ expected_lines|length }} line{{ '' if expected_lines|length == 1 else 's' }}
+    </span>
+  </div>
+
+  {% if expected_lines %}
+    <table class="w-full text-sm" data-testid="expected-lines-table">
+      <thead>
+        <tr class="text-[11px] uppercase tracking-wider text-stone-400">
+          <th class="text-left font-semibold py-1">Item</th>
+          <th class="text-left font-semibold py-1">Case #</th>
+          <th class="text-right font-semibold py-1">Expected</th>
+          {% if expected_editable %}<th class="py-1"></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody class="text-stone-700">
+        {% for ex in expected_lines %}
+          {% set item = expected_items_lookup.get(ex.item_id) %}
+          <tr class="border-t border-stone-100">
+            <td class="py-1.5">
+              <span class="font-medium">{{ item.name if item else 'item ' ~ ex.item_id }}</span>
+              {% if item and item.material_code %}
+                <span class="text-[11px] text-stone-400 ml-1">{{ item.material_code }}</span>
+              {% endif %}
+              {% if ex.note %}
+                <div class="text-[11px] text-stone-500 italic">{{ ex.note }}</div>
+              {% endif %}
+            </td>
+            <td class="py-1.5 text-stone-500">{{ ex.vendor_case_number or '—' }}</td>
+            <td class="py-1.5 text-right tabular-nums">
+              {{ ('%g' % ex.expected_quantity) }}{% if ex.unit %} {{ ex.unit }}{% endif %}
+            </td>
+            {% if expected_editable %}
+              <td class="py-1.5 text-right">
+                <form method="post"
+                      action="/receive/v2/{{ receive.id }}/expected-lines/{{ ex.id }}/delete"
+                      onsubmit="return confirm('Remove this expected line?');"
+                      data-testid="expected-line-delete-{{ ex.id }}"
+                      class="inline">
+                  <button class="text-[11px] text-stone-400 hover:text-red-600">Remove</button>
+                </form>
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="text-sm text-stone-500">No packing-list expected lines entered.</p>
+    <p class="text-[11px] text-stone-400 mt-1">
+      Add what the vendor said is in this shipment so the review page can flag short/over counts.
+    </p>
+  {% endif %}
+
+  {% if expected_editable %}
+    <form method="post"
+          action="/receive/v2/{{ receive.id }}/expected-lines"
+          data-testid="expected-line-add-form"
+          class="mt-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+      <select name="item_id" required
+              class="sm:col-span-4 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+        <option value="">Item…</option>
+        {% for c in choices %}
+          <option value="{{ c.item_id }}">{{ c.label }}</option>
+        {% endfor %}
+      </select>
+      <input name="expected_quantity" type="number" step="any" min="0.01" required
+             placeholder="Qty"
+             class="sm:col-span-2 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+      <input name="unit" maxlength="20" placeholder="unit"
+             class="sm:col-span-2 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+      <input name="vendor_case_number" maxlength="120" placeholder="Case # (opt)"
+             class="sm:col-span-2 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+      <button class="sm:col-span-2 rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+        + Add
+      </button>
+      <input name="note" maxlength="500" placeholder="Note (optional)"
+             class="sm:col-span-12 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+    </form>
+  {% else %}
+    <p class="mt-3 text-[11px] text-stone-400">Receive is finalized — expected lines are read-only.</p>
+  {% endif %}
+</div>
