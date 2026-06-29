@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Operator off-switch — when False the route logs that the call was
     # skipped (e.g. during incident or a planned freeze) without raising.
     ZOHO_INTEGRATION_RECEIVE_ENABLED: bool = True
+    # Future v2.9.x — outbound inventory-adjustment push through
+    # zoho-integration-service. OFF until that service surface exists.
+    # When False (default) PackTrack stamps adjustments NOT_CONFIGURED;
+    # when True the service worker (not yet implemented) will pick up
+    # PENDING rows and push them. PackTrack itself never calls Zoho.
+    ZOHO_INTEGRATION_ADJUST_ENABLED: bool = False
 
     LUMA_RECEIPT_WEBHOOK_URL: str = ""
     LUMA_PACKTRACK_SECRET: str = ""

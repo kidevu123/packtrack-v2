@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Adjust quantity · {{ item.name }} · PackTrack{% endblock %}
+{% block container_class %}max-w-3xl{% endblock %}
+{% block content %}
+
+{{ ui.page_header(
+     title="Adjust quantity · " ~ item.name,
+     subtitle=("SKU " ~ item.sku_code) if item.sku_code else (item.material_code or ""),
+     secondary=[
+       {"label": "← Item detail", "href": "/inventory/" ~ item.id},
+       {"label": "Adjustment history", "href": "/inventory/" ~ item.id ~ "/adjustments"},
+     ],
+) }}
+
+{% if error %}
+  <div class="bg-red-50 border border-red-200 rounded-2xl p-4 shadow-sm mb-5"
+       data-testid="adjust-form-error">
+    <p class="text-sm text-red-800">{{ error }}</p>
+  </div>
+{% endif %}
+
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+  {{ ui.summary_card(label="Current on hand",
+                     value=item.current_stock,
+                     tone="neutral",
+                     sub=item.unit or "units") }}
+  {{ ui.summary_card(label="Reorder at",
+                     value=item.reorder_point,
+                     tone="warn" if item.reorder_point else "neutral") }}
+  {{ ui.summary_card(label="Critical at",
+                     value=item.critical_point,
+                     tone="danger" if item.critical_point else "neutral") }}
+</div>
+
+<form method="post"
+      action="/inventory/{{ item.id }}/adjust"
+      data-testid="adjust-form"
+      class="bg-white border border-stone-200 rounded-2xl p-5 shadow-sm space-y-4">
+
+  <fieldset class="space-y-2">
+    <legend class="text-xs font-semibold uppercase tracking-wider text-stone-500">Mode</legend>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <label class="border border-stone-200 rounded-xl p-3 cursor-pointer hover:border-stone-500">
+        <input type="radio" name="mode" value="delta"
+               {% if submitted_mode in ('', 'delta', None) %}checked{% endif %}
+               data-testid="mode-delta-increase"
+               onchange="document.getElementById('direction-row').classList.remove('hidden')" />
+        <span class="ml-2 text-sm font-medium">Increase by quantity</span>
+        <p class="text-[11px] text-stone-500 mt-1">Add this many units to current stock.</p>
+      </label>
+      <label class="border border-stone-200 rounded-xl p-3 cursor-pointer hover:border-stone-500">
+        <input type="radio" name="mode" value="delta"
+               data-testid="mode-delta-decrease"
+               onchange="document.getElementById('direction').value='decrease'; document.getElementById('direction-row').classList.remove('hidden')" />
+        <span class="ml-2 text-sm font-medium">Decrease by quantity</span>
+        <p class="text-[11px] text-stone-500 mt-1">Subtract this many units from current stock.</p>
+      </label>
+      <label class="border border-stone-200 rounded-xl p-3 cursor-pointer hover:border-stone-500">
+        <input type="radio" name="mode" value="set_quantity"
+               {% if submitted_mode == 'set_quantity' %}checked{% endif %}
+               data-testid="mode-set-quantity"
+               onchange="document.getElementById('direction-row').classList.add('hidden')" />
+        <span class="ml-2 text-sm font-medium">Set actual counted quantity</span>
+        <p class="text-[11px] text-stone-500 mt-1">Cycle-count: enter what you actually counted; we compute the delta.</p>
+      </label>
+    </div>
+    <div id="direction-row" class="{% if submitted_mode == 'set_quantity' %}hidden{% endif %}">
+      <input type="hidden" name="direction" id="direction"
+             value="{{ submitted_direction or 'increase' }}" />
+    </div>
+  </fieldset>
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <label class="block">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Quantity</span>
+      <input name="quantity" type="number" step="any" min="0" required
+             value="{{ submitted_quantity or '' }}"
+             data-testid="adjust-quantity"
+             class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+      <p class="text-[11px] text-stone-500 mt-1">
+        Positive number. Direction is determined by the mode you picked above.
+      </p>
+    </label>
+
+    <label class="block">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Reason</span>
+      <select name="reason_code" required
+              data-testid="adjust-reason"
+              class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+        <option value="">Pick a reason…</option>
+        {% for value, label in reasons %}
+          <option value="{{ value }}" {% if submitted_reason_code == value %}selected{% endif %}>
+            {{ label }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label class="block">
+    <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">Notes</span>
+    <textarea name="notes" rows="2" maxlength="2000"
+              data-testid="adjust-notes"
+              placeholder="Required for 'Other'. Recommended for any decrease."
+              class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">{{ submitted_notes or "" }}</textarea>
+  </label>
+
+  <div class="flex items-center justify-between border-t border-stone-100 pt-4">
+    <a href="/inventory/{{ item.id }}"
+       class="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm text-stone-700 hover:border-stone-500">
+      Cancel
+    </a>
+    <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800"
+            data-testid="adjust-submit">
+      Record adjustment
+    </button>
+  </div>
+</form>
+
+<p class="mt-4 text-[11px] text-stone-400">
+  PackTrack is the local source of truth for packaging quantity counts. Adjustments are
+  recorded as immutable ledger rows — corrections are made by submitting a new
+  reversing adjustment, not by editing past entries. Zoho is not contacted by this action.
+</p>
+
+{% endblock %}

@@ -5,9 +5,10 @@ JSONB on POEvent.payload + ZohoMirror.line_items lets us query inside
 those structures without parsing TEXT columns at the application layer.
 """
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -734,3 +735,117 @@ class ReceivePackingListLine(SQLModel, table=True):
     source: str = Field(default="manual", max_length=20)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by_user_id: int | None = Field(default=None, foreign_key="users.id")
+
+
+# ---------------------------------------------------------------------------
+# Inventory adjustments (v2.9.0) — immutable movement ledger.
+# ---------------------------------------------------------------------------
+
+
+class AdjustmentMode(StrEnum):
+    DELTA = "delta"
+    SET_QUANTITY = "set_quantity"
+
+
+class AdjustmentDirection(StrEnum):
+    INCREASE = "increase"
+    DECREASE = "decrease"
+
+
+class AdjustmentReason(StrEnum):
+    CYCLE_COUNT_CORRECTION = "cycle_count_correction"
+    DAMAGED = "damaged"
+    LOST_MISSING = "lost_missing"
+    SAMPLE_OR_RD_USE = "sample_or_rd_use"
+    PRODUCTION_CONSUMPTION_CORRECTION = "production_consumption_correction"
+    FOUND_EXTRA = "found_extra"
+    MANUAL_CORRECTION = "manual_correction"
+    OTHER = "other"
+
+
+class AdjustmentSource(StrEnum):
+    MANUAL_ADJUSTMENT = "manual_adjustment"
+    CYCLE_COUNT = "cycle_count"
+    RECEIVING = "receiving"
+    PRODUCTION_CONSUMPTION = "production_consumption"
+    SYSTEM = "system"
+
+
+class ZohoSyncStatus(StrEnum):
+    NOT_CONFIGURED = "not_configured"
+    PENDING = "pending"
+    SYNCED = "synced"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class InventoryAdjustment(SQLModel, table=True):
+    """One immutable inventory movement / stock adjustment for a single Item.
+
+    Adjustments are the **only** sanctioned way to mutate
+    ``Item.current_stock`` from the UI under v2.9.0+. The row is
+    append-only — there is no edit/delete route, no PATCH endpoint, and
+    the service layer never updates an existing row. Corrections are
+    expressed as a new "reversal" adjustment that points at the
+    original via ``reversal_of_adjustment_id``.
+
+    Quantity columns are stored as ``Numeric(18, 4)`` so the math is
+    Decimal-safe end-to-end (the spec was explicit: no floats). The
+    in-flight ``Item.current_stock`` column is still ``float`` on the
+    items table — we accept that mismatch on purpose because changing
+    the item column shape is master-data work that lives on a different
+    branch; the adjustment service converts to/from ``float`` only at
+    the single Item-write point.
+
+    ``zoho_sync_status`` defaults to ``NOT_CONFIGURED`` — PackTrack v2.9.0
+    is the local source of truth and does NOT call Zoho directly. A
+    later worker can pick up ``PENDING``/``FAILED`` rows and push them
+    through zoho-integration-service; until that service surface
+    exists, every adjustment stays NOT_CONFIGURED.
+    """
+
+    __tablename__ = "inventory_adjustments"
+
+    id: int | None = Field(default=None, primary_key=True)
+    item_id: int = Field(foreign_key="items.id", index=True)
+    adjustment_number: str = Field(max_length=40, unique=True)
+
+    mode: AdjustmentMode
+    direction: AdjustmentDirection
+
+    # Decimal-safe quantities. quantity_delta is SIGNED — positive for
+    # INCREASE, negative for DECREASE — so quantity_before + quantity_delta
+    # always equals quantity_after, regardless of mode.
+    quantity_before: Decimal = Field(sa_column=Column(Numeric(18, 4), nullable=False))
+    quantity_delta: Decimal = Field(sa_column=Column(Numeric(18, 4), nullable=False))
+    quantity_after: Decimal = Field(sa_column=Column(Numeric(18, 4), nullable=False))
+
+    reason_code: AdjustmentReason
+    notes: str | None = None
+
+    created_by_user_id: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    source: AdjustmentSource = Field(default=AdjustmentSource.MANUAL_ADJUSTMENT)
+
+    # Future Zoho seam. PackTrack v2.9.0 NEVER calls Zoho directly.
+    zoho_sync_status: ZohoSyncStatus = Field(
+        default=ZohoSyncStatus.NOT_CONFIGURED, index=True,
+    )
+    zoho_sync_error: str | None = None
+    zoho_synced_at: datetime | None = None
+    zoho_reference: str | None = Field(default=None, max_length=120)
+
+    idempotency_key: str = Field(max_length=64, unique=True)
+
+    # Voiding / reversal metadata. Rows are still never edited — a void
+    # is a NEW adjustment whose ``reversal_of_adjustment_id`` points back
+    # at the row it cancels. These fields are populated on the ORIGINAL
+    # row when it is "marked void" via the create-reversal flow so the
+    # UI can show "voided by adj-N at T".
+    voided_at: datetime | None = None
+    voided_by_user_id: int | None = Field(default=None, foreign_key="users.id")
+    void_reason: str | None = None
+    reversal_of_adjustment_id: int | None = Field(
+        default=None, foreign_key="inventory_adjustments.id",
+    )

@@ -89,8 +89,14 @@
     </div>
 
     {# Edit col: ghost button so it doesn't compete with primary actions. #}
-    <div class="col-span-2 md:col-span-1 text-right">
+    <div class="col-span-2 md:col-span-1 text-right flex items-center justify-end gap-1">
       {% if user.role.value == 'owner' %}
+        <a href="/inventory/{{ it.id }}/adjust"
+           title="Record an inventory adjustment for this item"
+           data-testid="inventory-row-adjust-{{ it.id }}"
+           class="text-xs text-stone-400 hover:text-stone-900 px-2 py-1 rounded transition-colors">
+          Adjust
+        </a>
         <button type="button" @click="editing = !editing" class="text-xs text-stone-400 hover:text-stone-900 px-2 py-1 rounded transition-colors">
           <span x-show="!editing">Edit</span>
           <span x-show="editing" x-cloak>Close</span>

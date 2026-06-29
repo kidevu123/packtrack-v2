@@ -213,7 +213,9 @@ def test_alembic_head_is_v2_7_5_revision():
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = sd.get_heads()
     assert len(heads) == 1, f"expected 1 head, got {heads}"
-    assert heads[0] == "f2g3h4i5j6k7"
+    # v2.9.0 advanced this from f2g3h4i5j6k7 (v2.7.5) to g3h4i5j6k7l8
+    # by adding the inventory_adjustments table.
+    assert heads[0] == "g3h4i5j6k7l8"
 
 
 def test_receive_packing_list_line_row_roundtrips(session):

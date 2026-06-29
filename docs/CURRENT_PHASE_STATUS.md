@@ -1,6 +1,34 @@
 # Current Phase Status
 
-## v2.7.6 — Receiving: import expected lines from CSV/text (feature branch, NOT yet deployed)
+## v2.9.0 — Inventory adjustments ledger: PackTrack as local source of truth (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-adjustments-ledger` (off `origin/main`, in a separate worktree so the v2.8.0 inventory/master-data editor WIP stays untouched). |
+| **Alembic head** | `g3h4i5j6k7l8` (advances from v2.7.5/v2.7.6's `f2g3h4i5j6k7`). Adds `inventory_adjustments` only — additive, safe. |
+| **Feature flag** | None — this is the new canonical adjust path. The future Zoho push is gated by `ZOHO_INTEGRATION_ADJUST_ENABLED` (default OFF). |
+| **Status** | Code complete; tests green (358 passed; +25 over v2.7.6's 333); **not merged, not deployed, not tagged**. |
+| **Version note** | v2.8.0 is intentionally skipped — that slot is reserved for the active master-data editor branch (`feature/inventory-masterdata-editor-v2.8.0` @ `b643b4e`). v2.9.0 is the new feature line for inventory adjustments. |
+
+**v2.9.0 scope** — PackTrack becomes the operational source of truth for packaging quantity counts. Operators get a sanctioned way to increase / decrease / set the on-hand quantity without anyone editing `Item.current_stock` directly.
+
+* **Immutable movement ledger** — new `InventoryAdjustment(item_id, adjustment_number, mode, direction, quantity_before, quantity_delta, quantity_after, reason_code, notes, created_by_user_id, created_at, source, zoho_sync_status, zoho_sync_error, zoho_synced_at, zoho_reference, idempotency_key, voided_at, voided_by_user_id, void_reason, reversal_of_adjustment_id)`. Adjustment rows are append-only — no PATCH/PUT/DELETE route exists and the service never overwrites an existing row. Corrections are expressed by recording a new "reversal" adjustment that points at the original via `reversal_of_adjustment_id`.
+* **Decimal-safe quantities** — `quantity_before` / `quantity_delta` / `quantity_after` are `NUMERIC(18, 4)` so the math is Decimal end-to-end. The existing `Item.current_stock` column stays `DOUBLE PRECISION` for this release (that column lives on the in-flight master-data editor's surface area); the service converts to `float` only at the single Item-write point.
+* **Transactional write with row lock** — `services/inventory_adjustments.create_adjustment` selects the item `FOR UPDATE` (no-op on SQLite, real on Postgres), reads `current_stock`, computes the new total in Decimal, inserts the ledger row, writes the new `current_stock`, and commits — all in one DB transaction.
+* **Reason allowlist** — `cycle_count_correction`, `damaged`, `lost_missing`, `sample_or_rd_use`, `production_consumption_correction`, `found_extra`, `manual_correction`, `other`. `other` requires non-empty `notes`; UI surfaces human-friendly labels.
+* **Validation** — rejects zero delta, rejects negative resulting stock (configurable but defaults to reject), rejects unknown reason codes, rejects `set_quantity` that equals current stock (no-op).
+* **Server-side ownership enforcement** — `if user.role != Role.OWNER: 403` on the form GET, the form POST, and the inline buttons (the buttons are also hidden in the template, but the server check is the actual gate).
+* **Routes** — `GET /inventory/{id}/adjust`, `POST /inventory/{id}/adjust`, `GET /inventory/{id}/adjustments`, `GET /inventory/adjustments` (global, filter by item id / reason / sync status). Mounted AFTER the inventory router so the static `/inventory/adjustments` path wins over `/inventory/{item_id:int}`.
+* **UI entry points** — "Adjust" link in each inventory list row (owner-only), "Adjust quantity" button in the item-detail Stock card (owner-only), "History →" link on the same card (everyone). Adjustment form has mode radios (Increase / Decrease / Set actual counted), quantity input, reason dropdown, notes textarea, inline 400 re-render when validation fails. Per-item and global history pages show timestamp + adjustment number + reason + before / Δ / after + sync status, with the reversal indicator and void marker rendered inline.
+* **Zoho sync seam — PackTrack NEVER calls Zoho directly** — `enqueue_or_mark_adjustment_sync()` sets `zoho_sync_status` based on three settings flags (`ZOHO_INTEGRATION_ADJUST_ENABLED` + `ZOHO_INTEGRATION_BASE_URL` + `ZOHO_INTEGRATION_APP_TOKEN`). When all are set: `PENDING` (a future worker will push through zoho-integration-service). Otherwise: `NOT_CONFIGURED`. No HTTP call is made from the adjustment path; the worker is not part of v2.9.0. Source-level guard test verifies the adjustment service imports no Zoho symbol and no HTTP client.
+
+**Tests (+25 cases, total 358)** in `tests/test_v2_9_0_inventory_adjustments.py`: owner vs non-owner perms on GET + POST · increase / decrease / set_quantity math · zero-delta reject · negative-stock reject · invalid-reason reject · `other`-without-notes reject · notes persisted · no PATCH/PUT/DELETE route exists for an adjustment · service never overwrites · failed validation does not change stock · item history page render · global history page render · sync default `NOT_CONFIGURED` · sync flips to `PENDING` when all three integration settings on · `enqueue_or_mark_adjustment_sync` makes no HTTP call (monkeypatched httpx surfaces it as a failure if it did) · adjustment service imports no Zoho/OAuth/HTTP symbol · master-data fields unchanged by adjustment · quantity columns round-trip as Decimal with no float drift · adjustment numbers sequential within year (`ADJ-YYYY-NNNN`) · neither adjustment module touches Receiving.
+
+**Hard contract preserved.** No edit to existing `Item` columns. No Receiving file changed. No Zoho/OAuth import in the new service. No HTTP call at adjustment time. v2.8.0 WIP on `feature/inventory-masterdata-editor-v2.8.0` not touched.
+
+---
+
+## v2.7.6 — Receiving: import expected lines from CSV/text (deployed + tagged via merge into main)
 
 | | |
 |---|---|
