@@ -58,6 +58,10 @@ from packtrack.services.receiving_v2 import (
     test_receive_marker_text,
     totals_by_item,
 )
+from packtrack.services.receiving_v2_import import (
+    PreviewReport,
+    build_preview,
+)
 from packtrack.services.receiving_v2_reconcile import (
     build_reconciliation_report,
 )
@@ -1151,3 +1155,185 @@ def delete_expected_line(
         url=f"/receive/v2/{rec.id}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+# ---------------------------------------------------------------------------
+# Expected-line CSV/text import (v2.7.6) — no PDF/OCR
+# ---------------------------------------------------------------------------
+#
+# Two-step flow:
+#   POST .../import/preview  → parse + match, render preview (no DB writes)
+#   POST .../import/commit   → re-parse the same text, persist only READY rows
+#
+# We re-parse on commit (rather than serializing the preview rows into a
+# hidden field) so the operator can't tamper with the matching decision
+# in browser devtools.
+
+
+_MAX_IMPORT_BYTES = 1 * 1024 * 1024  # 1 MiB cap on uploaded CSVs
+
+
+def _read_import_text(
+    paste_text: str, upload: UploadFile | None,
+) -> str:
+    """Pasted text wins over upload (both set is uncommon and almost
+    always means "paste was meant"); empty + empty raises 400."""
+    if paste_text and paste_text.strip():
+        return paste_text
+    if upload is not None and upload.filename:
+        ext = upload.filename.rsplit(".", 1)[-1].lower() if "." in upload.filename else ""
+        if ext not in ("csv", "txt", "tsv"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Upload must be a .csv, .tsv, or .txt file (got {ext!r}). "
+                    "XLSX import is not supported in v2.7.6."
+                ),
+            )
+        raw = upload.file.read(_MAX_IMPORT_BYTES + 1)
+        if len(raw) > _MAX_IMPORT_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Upload is over {_MAX_IMPORT_BYTES // 1024} KiB. "
+                    "Trim it down or split into multiple imports."
+                ),
+            )
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return raw.decode("latin-1", errors="replace")
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Provide either pasted text or a CSV/TSV file.",
+    )
+
+
+@router.post(
+    "/{receive_id}/expected-lines/import/preview",
+    response_class=HTMLResponse,
+)
+def preview_expected_lines_import(
+    request: Request,
+    receive_id: int,
+    paste_text: str = Form(""),
+    replace_existing: str = Form(""),
+    file: UploadFile | None = File(None),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Parse and match imported rows. Does NOT write any DB row.
+
+    Renders a preview page that re-submits the same text to the commit
+    route on confirm."""
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if not _expected_lines_editable(rec):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Receive is finalized — expected-line import is read-only.",
+        )
+    text = _read_import_text(paste_text, file)
+    report: PreviewReport = build_preview(session, rec, text=text)
+    po = session.get(PurchaseOrder, rec.purchase_order_id) if rec.purchase_order_id else None
+    return _render(
+        request,
+        "receive_v2/import_preview.html",
+        {
+            "user": user,
+            "receive": rec,
+            "po": po,
+            "report": report,
+            "import_text": text,
+            "replace_existing": _truthy(replace_existing),
+            "marked_test_banner": is_test_receive(rec),
+            "marker_text": test_receive_marker_text(rec),
+        },
+    )
+
+
+@router.post(
+    "/{receive_id}/expected-lines/import/commit",
+    response_class=HTMLResponse,
+)
+def commit_expected_lines_import(
+    request: Request,
+    receive_id: int,
+    import_text: str = Form(""),
+    replace_existing: str = Form(""),
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Re-parse the exact text the preview saw, then persist only rows
+    with status READY. Skips invalid/ambiguous/unmatched. Emits one
+    summary POEvent."""
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+    if not _expected_lines_editable(rec):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Receive is finalized — expected-line import is read-only.",
+        )
+    if not (import_text or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No import payload — re-open the preview.",
+        )
+    report = build_preview(session, rec, text=import_text)
+    if report.error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=report.error,
+        )
+    replace = _truthy(replace_existing)
+    deleted_count = 0
+    if replace:
+        existing = _load_expected_lines(session, rec.id)
+        deleted_count = len(existing)
+        for row in existing:
+            session.delete(row)
+        session.flush()
+
+    imported = 0
+    for r in report.ready_rows:
+        if r.item_id is None:
+            continue
+        session.add(ReceivePackingListLine(
+            receive_id=rec.id,
+            item_id=r.item_id,
+            vendor_case_number=r.vendor_case_number or None,
+            expected_quantity=r.expected_quantity,
+            unit=r.unit or None,
+            note=r.note or None,
+            source="csv_import",
+            created_by_user_id=user.id,
+        ))
+        imported += 1
+
+    skipped = len(report.skipped_rows)
+    if rec.purchase_order_id is not None:
+        replace_blurb = (
+            f" (replaced {deleted_count} existing)" if replace else ""
+        )
+        session.add(POEvent(
+            po_id=rec.purchase_order_id,
+            kind="receive_expected_lines_imported",
+            message=(
+                f"Imported {imported} packing-list expected line"
+                f"{'' if imported == 1 else 's'} for Receive "
+                f"{rec.receive_number}{replace_blurb}; {skipped} skipped."
+            ),
+            actor_id=user.id,
+        ))
+    _bump_updated(rec)
+    session.commit()
+    return RedirectResponse(
+        url=f"/receive/v2/{rec.id}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "on", "yes")

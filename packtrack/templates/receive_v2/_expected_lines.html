@@ -61,6 +61,47 @@
   {% endif %}
 
   {% if expected_editable %}
+    {# v2.7.6 — CSV/text import. Collapsed by default so the manual add form
+       remains the most prominent action. #}
+    <details class="mt-3 group" data-testid="expected-lines-import-details">
+      <summary class="cursor-pointer text-xs text-stone-500 hover:text-stone-900 select-none">
+        Import expected lines from CSV or pasted text…
+      </summary>
+      <form method="post"
+            action="/receive/v2/{{ receive.id }}/expected-lines/import/preview"
+            enctype="multipart/form-data"
+            data-testid="expected-lines-import-form"
+            class="mt-3 space-y-2 bg-stone-50 border border-stone-200 rounded-xl p-3">
+        <p class="text-[11px] text-stone-500">
+          Paste rows or upload a <code>.csv</code> / <code>.tsv</code> / <code>.txt</code> file.
+          Header is required. Recognized columns:
+          <span class="font-mono text-[10px]">material_code, item, sku, quantity, unit, vendor_case_number, note</span>.
+          XLSX and PDF are not supported in v2.7.6.
+        </p>
+        <pre class="text-[10px] bg-white border border-stone-200 rounded p-2 text-stone-600 overflow-x-auto">material_code,item,quantity,unit,vendor_case_number,note
+PT-00172,,100,pcs,CASE-001,
+,Mailer 6x9,50,pcs,CASE-002,short ship</pre>
+        <textarea name="paste_text" rows="4"
+                  placeholder="Paste rows here (with header) — or use the file picker below"
+                  class="w-full rounded-lg border-stone-300 text-sm font-mono px-3 py-2 focus:border-stone-500 focus:ring-0"
+                  data-testid="expected-lines-import-paste"></textarea>
+        <div class="flex items-center gap-2">
+          <input type="file" name="file"
+                 accept=".csv,.tsv,.txt"
+                 class="text-xs flex-1 min-w-0"
+                 data-testid="expected-lines-import-file" />
+          <label class="text-[11px] text-stone-600 flex items-center gap-1">
+            <input type="checkbox" name="replace_existing" value="true"
+                   class="rounded border-stone-400 text-stone-900 focus:ring-0" />
+            Replace existing
+          </label>
+          <button class="rounded-lg bg-stone-900 text-white text-xs font-medium px-3 py-1.5 hover:bg-stone-800">
+            Preview
+          </button>
+        </div>
+      </form>
+    </details>
+
     <form method="post"
           action="/receive/v2/{{ receive.id }}/expected-lines"
           data-testid="expected-line-add-form"

@@ -1,6 +1,32 @@
 # Current Phase Status
 
-## v2.7.5 — Receiving MVP: manual packing-list reconciliation + activity strip (feature branch, NOT yet deployed)
+## v2.7.6 — Receiving: import expected lines from CSV/text (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-vnext-v2.7.6-import-expected-lines` (off `origin/main`, in a separate worktree so the v2.8.0 inventory/master-data WIP stays untouched). |
+| **Alembic head** | `f2g3h4i5j6k7` (unchanged — no schema changes; import writes into the v2.7.5 `receive_packing_list_lines` table). |
+| **Feature flag** | `RECEIVING_VNEXT_ENABLED` remains ON in production. |
+| **Status** | Code complete; tests green (333 passed; +27 over v2.7.5's 306); **not merged, not deployed, not tagged**. |
+
+**v2.7.6 scope** — first step beyond manual entry, but still not OCR or PDF parsing:
+
+* **CSV / pasted-text import** — new `POST /receive/v2/{id}/expected-lines/import/preview` parses pasted text OR an uploaded `.csv` / `.tsv` / `.txt` file (1 MiB cap, `utf-8-sig` with `latin-1` fallback) and renders a preview page. **No DB write on preview.** `POST /receive/v2/{id}/expected-lines/import/commit` re-parses the same payload (so browser-side tampering can't bypass matching) and persists only `READY` rows into the existing `ReceivePackingListLine` table with `source='csv_import'`.
+* **CSV format** — header-driven with synonym tolerance. Required: one of `{item, item_name, name, sku, material_code}` + one of `{quantity, expected_quantity, qty}`. Optional: `unit`, `vendor_case_number` (or `case` / `case_number`), `note`. Delimiter is auto-detected between comma / tab / semicolon / pipe by header-field count.
+* **Matching** — deterministic only, scoped to the receive's PO items: `material_code` exact → `sku_code` exact → item `name` exact → unambiguous substring containment on name. Case-insensitive. Multiple hits → `AMBIGUOUS`; no hits → `UNMATCHED`; non-positive/non-numeric quantity → `INVALID_QTY`. No fuzzy/AI matching.
+* **Replace-existing** — optional checkbox on both preview and commit forms. Off by default. When on, the existing `ReceivePackingListLine` rows for this receive are deleted before the ready rows are inserted, and the audit POEvent mentions the replacement count.
+* **Audit** — commit emits one `POEvent(kind="receive_expected_lines_imported", message="Imported N packing-list expected lines for Receive R-...; M skipped.")`. Falls back to "1 packing-list expected line" / "0 skipped" when applicable. The activity strip from v2.7.5 already filters this kind in via the same allowlist (no allowlist update needed because `receive_expected_lines_imported` was added at the same time).
+* **Reconciliation integration** — imported rows are normal `ReceivePackingListLine` records; the v2.7.5 review reconciliation surfaces them as Short/Over/Missing/Unexpected/Match warnings unchanged. Verified by `test_imported_lines_show_in_review_reconciliation`.
+* **UI** — collapsed `<details>` "Import expected lines from CSV or pasted text…" section inside the existing expected-lines card on `/receive/v2/{id}`. Has a textarea, file picker, "Replace existing" checkbox, and an inline sample of the format. Preview page lists every parsed row with status + detail + skip vs commit summary.
+* **XLSX intentionally not supported in v2.7.6** — the runtime carries no XLSX library (no `openpyxl`, no `pandas`, no `tablib`) and we're not pulling one in for a single feature. The preview route returns 400 with an explicit message when a `.xlsx` file is uploaded. The follow-up plan is to wait for 2–3 real vendor packing-list samples (CSV vs PDF vs XLSX) before deciding whether to ship a per-format adapter or stay on "operator pastes into the textarea."
+
+**Tests (+27 cases, total 333)** in `tests/test_v2_7_6_expected_line_import.py`: service-level matching (material_code / sku / name exact, substring, ambiguous, unmatched); invalid + zero quantity classification; tab delimiter detection; OWNER vs DESIGN permissions on preview AND commit; flag-OFF blocks both; terminal-status blocks both; pasted CSV preview render; uploaded CSV preview render; preview writes nothing; mixed-row preview classification; commit imports ready / skips bad; replace_existing deletes old rows first; commit emits the summary POEvent; commit creates no BoxReceipts; import service file imports no Zoho/Luma symbol (source-level guard); imported rows surface in the v2.7.5 reconciliation report and on `/review`; XLSX upload rejected with a clear message; empty payload rejected with 400; legacy `/receive` regression; packing-list file upload form regression; manual expected-line CRUD regression.
+
+**Hard contract preserved.** No schema change. No Zoho payload change. No Luma payload change. No finalize semantics change. No real receive data mutation. No PDF parsing. No OCR. No vendor portal. No multi-PO receiving. Feature flag default unchanged. v2.8.0 WIP on `feature/inventory-masterdata-editor-v2.8.0` not touched.
+
+---
+
+## v2.7.5 — Receiving MVP: manual packing-list reconciliation + activity strip (deployed + tagged via merge into main)
 
 | | |
 |---|---|

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Import preview · {{ receive.receive_number }} · PackTrack{% endblock %}
+{% block container_class %}max-w-[1200px]{% endblock %}
+{% block content %}
+
+{{ ui.page_header(
+     title="Import preview · " ~ receive.receive_number,
+     subtitle=("PO " ~ po.po_number) if po else "",
+     secondary=[
+       {"label": "← Back to receive", "href": "/receive/v2/" ~ receive.id},
+     ],
+) }}
+
+{% include "receive_v2/_test_banner.html" %}
+
+{% if report.error %}
+  <div class="bg-red-50 border border-red-200 rounded-2xl p-4 shadow-sm mb-5">
+    <p class="text-sm text-red-800">{{ report.error }}</p>
+    <a href="/receive/v2/{{ receive.id }}" class="inline-block mt-2 text-xs text-red-700 underline">
+      Go back and fix the data
+    </a>
+  </div>
+{% else %}
+  {% set ready_count = report.ready_rows|length %}
+  {% set skipped_count = report.skipped_rows|length %}
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+    {{ ui.summary_card(label="Ready to import", value=ready_count, tone="ok") }}
+    {{ ui.summary_card(label="Will be skipped", value=skipped_count, tone="warn" if skipped_count else "neutral") }}
+    {{ ui.summary_card(label="Total parsed", value=report.rows|length, tone="neutral") }}
+  </div>
+
+  <div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm mb-5">
+    <table class="w-full text-sm" data-testid="import-preview-table">
+      <thead>
+        <tr class="text-[11px] uppercase tracking-wider text-stone-400">
+          <th class="text-left font-semibold py-1">#</th>
+          <th class="text-left font-semibold py-1">Status</th>
+          <th class="text-left font-semibold py-1">Item / detail</th>
+          <th class="text-left font-semibold py-1">Case #</th>
+          <th class="text-right font-semibold py-1">Qty</th>
+        </tr>
+      </thead>
+      <tbody class="text-stone-700">
+        {% for r in report.rows %}
+          {% set tone_class = {
+              'ready':       'text-emerald-700',
+              'unmatched':   'text-amber-700',
+              'ambiguous':   'text-amber-700',
+              'invalid_qty': 'text-red-700',
+              'invalid':     'text-red-700',
+            }[r.status.value] %}
+          <tr class="border-t border-stone-100" data-testid="import-row-{{ r.line_no }}">
+            <td class="py-1.5 text-stone-400 tabular-nums">{{ r.line_no }}</td>
+            <td class="py-1.5 text-[11px] uppercase tracking-wider {{ tone_class }}">
+              {{ r.status.value }}
+            </td>
+            <td class="py-1.5">
+              {% if r.item_id %}
+                <span class="font-medium">{{ r.item_name }}</span>
+                {% if r.material_code %}
+                  <span class="text-[11px] text-stone-400 ml-1">{{ r.material_code }}</span>
+                {% endif %}
+              {% else %}
+                <span class="font-medium text-stone-500">{{ r.raw_item or '(no item)' }}</span>
+              {% endif %}
+              {% if r.detail %}
+                <div class="text-[11px] text-stone-500 italic">{{ r.detail }}</div>
+              {% endif %}
+              {% if r.note %}
+                <div class="text-[11px] text-stone-500">{{ r.note }}</div>
+              {% endif %}
+            </td>
+            <td class="py-1.5 text-stone-500">{{ r.vendor_case_number or '—' }}</td>
+            <td class="py-1.5 text-right tabular-nums">
+              {% if r.status.value == 'invalid_qty' %}
+                <span class="text-red-700">{{ r.raw_quantity or '—' }}</span>
+              {% else %}
+                {{ ('%g' % r.expected_quantity) }}{% if r.unit %} {{ r.unit }}{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form method="post"
+        action="/receive/v2/{{ receive.id }}/expected-lines/import/commit"
+        data-testid="import-commit-form"
+        class="bg-stone-50 border border-stone-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+    <textarea name="import_text" class="hidden">{{ import_text }}</textarea>
+    <label class="text-xs text-stone-700 flex items-center gap-2">
+      <input type="checkbox" name="replace_existing" value="true"
+             {% if replace_existing %}checked{% endif %}
+             class="rounded border-stone-400 text-stone-900 focus:ring-0"
+             data-testid="import-replace-existing" />
+      Replace existing expected lines before import
+    </label>
+    <div class="flex items-center gap-2">
+      <a href="/receive/v2/{{ receive.id }}"
+         class="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-700 hover:border-stone-500">
+        Go back and fix data
+      </a>
+      <button {% if ready_count == 0 %}disabled{% endif %}
+              class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800 disabled:bg-stone-300 disabled:cursor-not-allowed"
+              data-testid="import-confirm-button">
+        Import {{ ready_count }} ready row{{ '' if ready_count == 1 else 's' }}
+      </button>
+    </div>
+  </form>
+{% endif %}
+
+{% endblock %}
