@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # PENDING rows and push them. PackTrack itself never calls Zoho.
     ZOHO_INTEGRATION_ADJUST_ENABLED: bool = False
 
+    # v2.17.0 — Reconciliation dashboard staleness threshold (hours). An
+    # item's Zoho snapshot is considered stale when the snapshot
+    # timestamp is older than this. Default 24h matches the existing
+    # apscheduler sync interval; raise it if the dashboard reports too
+    # many false positives during incident windows.
+    INVENTORY_RECONCILIATION_STALE_HOURS: int = 24
+
     LUMA_RECEIPT_WEBHOOK_URL: str = ""
     LUMA_PACKTRACK_SECRET: str = ""
     LUMA_URL: str = ""                 # e.g. http://192.168.1.134:3000

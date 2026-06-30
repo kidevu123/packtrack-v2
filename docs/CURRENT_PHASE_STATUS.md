@@ -1,6 +1,31 @@
 # Current Phase Status
 
-## v2.16.3 — Inventory adjustment retry-safety gate (feature branch, NOT yet deployed)
+## v2.17.0 — Inventory reconciliation & sync-exceptions dashboard (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-reconciliation-v2.17.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). **No schema change.** |
+| **Status** | Code complete; tests green (558 passed; +30 new); ruff clean; jinja compiles; alembic single head; **not merged, not deployed, not tagged**. |
+| **New, read-only** | No business-logic change. No mutation surface — the dashboard is strictly visibility. Patch bump goes one level higher to minor (v2.17.0) because this is a new operator-facing feature, not a fix. |
+
+**Why this release** — operators needed one place to see PackTrack-vs-Zoho variances, missing/stale snapshots, and adjustment sync exceptions (including the v2.16.3 retry-eligibility decisions). Previously they had to triangulate across `/inventory` (no Zoho variance column), per-item detail pages (one item at a time), and `/inventory/adjustments` (sync exceptions only, no item-side variance). v2.17.0 ships a single dashboard.
+
+**v2.17.0 scope**
+
+* **New service** — `services/inventory_reconciliation.py`. Strictly read-only by construction: no DB writes, no Zoho calls, no integration-service calls. Four compute helpers (`compute_variance_rows`, `compute_stale_snapshot_rows`, `compute_sync_exception_rows`, `compute_summary`) + `apply_filters` + `build_dashboard` composer. Exception rows are tagged with the v2.16.3 `retry_eligibility` decision so the UI can never offer Retry on a row the server would refuse.
+* **New route** — `GET /inventory/reconciliation`. Authenticated visibility (any role); mutation surface still gated by the existing owner-only retry route + the v2.16.3 safety gate.
+* **New template** — `templates/inventory_reconciliation/dashboard.html`. Top policy banner ("PackTrack quantity is the source of truth..."), 7 summary cards (Total / In sync / Variance / Stale-or-missing / Failed sync / Retryable / Blocked), filter form (search, product line, variance_only, stale_only, failed_only, retryable_only), three tables (variance / stale-or-missing / sync exceptions). Each row has Review · History · Cycle count links (item-side) or Retry sync · View history (adjustment-side). Retry button rendered only for owners on rows that pass `retry_eligibility`.
+* **Nav** — added "Reconciliation" link to the existing inventory page secondary nav (visible to all roles, alongside "Export CSV"; owner-only "Cycle count" + "Sync now" links unchanged).
+* **Settings** — added `INVENTORY_RECONCILIATION_STALE_HOURS: int = 24` to `Settings`. Default matches the apscheduler sync interval; raise if dashboard reports too many false positives during incident windows.
+
+**Tests (+30 cases in `tests/test_v2_17_0_inventory_reconciliation.py`)** — service-level coverage of each computed section (variance: PT-higher / Zoho-higher / in-sync excluded / stale-but-equal still listed; stale: missing vs stale sort, fresh excluded; exceptions: failed shown / synced not shown / reversed pair eligibility) plus the summary counters (in-sync / variance / stale+missing / failed / retryable / blocked) and every filter (search, product_line, variance_only, stale_only, failed_only, retryable_only). Route-level: renders for authorized user, unauth redirects, owner sees Retry / non-owner doesn't, blocked rows show block reason instead of Retry, query-string filters work. Read-only invariants: `build_dashboard` doesn't mutate `Item.current_stock`, `last_zoho_stock_snapshot`, or any `InventoryAdjustment` field (snapshot tests). Import-surface defense: no `zoho.oauth` / `zohocrmsdk` / `zohoinventory` / `requests_oauthlib` in either new module. v2.16.3 retry route still works for eligible rows (regression check).
+
+**Hard contract preserved.** No business-logic change. No schema change — single Alembic head still `i5j6k7l8m9n0`. No mutation surface on the new route or service. No PackTrack→Zoho direct call. No Receiving file touched. `services/inventory_adjustments.py` (creator) and `services/inventory_adjustment_sync.py` (orchestrator) untouched. No mass stock writer added. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0/v2.16.1/v2.16.2/v2.16.3 contracts intact.
+
+---
+
+## v2.16.3 — Inventory adjustment retry-safety gate (deployed + tagged via merge into main)
 
 | | |
 |---|---|

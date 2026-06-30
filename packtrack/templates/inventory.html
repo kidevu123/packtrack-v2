@@ -5,7 +5,10 @@
 {% block content %}
 <style>[x-cloak] { display: none !important; }</style>
 
-{% set _secondary = [{"label":"Export CSV","href":"/inventory.csv"}] %}
+{% set _secondary = [
+     {"label":"Export CSV","href":"/inventory.csv"},
+     {"label":"Reconciliation","href":"/inventory/reconciliation"},
+   ] %}
 {% if user.role.value == 'owner' %}
   {% set _secondary = _secondary + [
        {"label":"Cycle count","href":"/inventory/cycle-count"},
