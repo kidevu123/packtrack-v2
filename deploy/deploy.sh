@@ -38,6 +38,167 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required local command: $1"
 }
 
+# ---------------------------------------------------------------------------
+# Repo-state guard (v2.16.1)
+# ---------------------------------------------------------------------------
+#
+# Production deploys MUST come from `main` at exactly `origin/main`, with
+# a clean working tree. The script refuses otherwise. Permanent defense
+# against the v2.7.4 and v2.16.0 incidents where the deploy was
+# accidentally run from a worktree on a feature branch.
+#
+# Escape hatch (NOT for routine prod use): ALLOW_NON_MAIN_DEPLOY=1
+#   * skips the branch + freshness checks
+#   * still refuses a dirty working tree
+#   * prints a loud warning + the branch / SHA it is about to ship
+#
+# The guard never runs git in a destructive mode (no checkout / pull /
+# reset). On any failure it prints the exact remediation command.
+
+_read_version() {
+  if [[ -f pyproject.toml ]]; then
+    local v
+    v="$(awk -F'"' '/^version[[:space:]]*=/{print $2; exit}' pyproject.toml 2>/dev/null)"
+    if [[ -n "$v" ]]; then echo "$v"; return; fi
+  fi
+  if [[ -f packtrack/__init__.py ]]; then
+    awk -F'"' '/^__version__[[:space:]]*=/{print $2; exit}' packtrack/__init__.py 2>/dev/null || echo unknown
+    return
+  fi
+  echo unknown
+}
+
+_read_alembic_head() {
+  # Best-effort: pick the file whose `revision` is not referenced as
+  # any other file's `down_revision`. If ambiguous, return "?".
+  local dir=migrations/versions
+  [[ -d "$dir" ]] || { echo "?"; return; }
+  local files
+  files=$(ls -1 "$dir"/*.py 2>/dev/null | grep -v '__init__' || true)
+  [[ -n "$files" ]] || { echo "?"; return; }
+  local downs heads head_count
+  downs=$(awk -F"['\"]" '/^down_revision[[:space:]]*[:=]/{
+    for (i=1; i<=NF; i++) if ($i != "" && $i ~ /^[a-zA-Z0-9_-]+$/) { print $i; break }
+  }' $files 2>/dev/null | sort -u)
+  heads=$(for f in $files; do
+    awk -F"['\"]" '/^revision[[:space:]]*[:=]/{
+      for (i=1; i<=NF; i++) if ($i != "" && $i ~ /^[a-zA-Z0-9_-]+$/) { print $i; break }
+    }' "$f"
+  done | sort -u | grep -v -F -x -f <(printf '%s\n' "$downs") 2>/dev/null || true)
+  head_count=$(echo "$heads" | grep -c . || true)
+  if [[ "$head_count" == "1" ]]; then
+    echo "$heads"
+  else
+    echo "?"
+  fi
+}
+
+guard_repo_state() {
+  need git
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    die "Not inside a git repository (cwd=$PWD)"
+  fi
+
+  local branch sha pkg_version alembic_head
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+  sha="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+  pkg_version="$(_read_version)"
+  alembic_head="$(_read_alembic_head)"
+
+  local override="${ALLOW_NON_MAIN_DEPLOY:-0}"
+
+  # --- Branch check ---
+  if [[ "$branch" != "main" ]]; then
+    if [[ "$override" == "1" ]]; then
+      echo "" >&2
+      echo "  =====================================================================" >&2
+      echo "  WARNING: deploying from NON-main branch via ALLOW_NON_MAIN_DEPLOY=1" >&2
+      echo "  branch:  $branch" >&2
+      echo "  sha:     $sha" >&2
+      echo "  version: $pkg_version" >&2
+      echo "  alembic: $alembic_head" >&2
+      echo "  This bypass is for testing / recovery. Do NOT use for routine prod." >&2
+      echo "  =====================================================================" >&2
+      echo "" >&2
+    else
+      die "Refusing to deploy from non-main branch.
+  current branch: $branch
+  current sha:    $sha
+  current version: $pkg_version
+
+  Production deploys MUST come from main at origin/main. Run:
+
+    cd \$(git rev-parse --show-toplevel)
+    git checkout main
+    git pull --ff-only origin main
+    PVE_HOST=${PVE_HOST} LXC_ID=${LXC_ID} bash deploy/deploy.sh
+
+  To bypass (testing / recovery only):
+
+    ALLOW_NON_MAIN_DEPLOY=1 PVE_HOST=${PVE_HOST} LXC_ID=${LXC_ID} bash deploy/deploy.sh"
+    fi
+  fi
+
+  # --- Dirty-tree check (always enforced, even with override) ---
+  # `git status --porcelain` lists staged, unstaged AND untracked files,
+  # respecting .gitignore. If any line comes back, the tree is dirty.
+  local dirty
+  dirty="$(git status --porcelain 2>/dev/null || true)"
+  if [[ -n "$dirty" ]]; then
+    die "Refusing to deploy with a dirty working tree.
+  branch: $branch
+  sha:    $sha
+
+  The following changes are present (commit / stash / remove first):
+
+$(echo "$dirty" | sed 's/^/    /')
+
+  After cleaning the tree, re-run the deploy."
+  fi
+
+  # --- Freshness check (skipped on override) ---
+  if [[ "$override" != "1" ]]; then
+    if ! git fetch --quiet origin main 2>/dev/null; then
+      die "git fetch origin main failed. Network / auth / remote 'origin' misconfigured? Fix and retry."
+    fi
+    local local_main remote_main
+    local_main="$(git rev-parse main 2>/dev/null || echo missing)"
+    remote_main="$(git rev-parse origin/main 2>/dev/null || echo missing)"
+    if [[ "$local_main" == "missing" || "$remote_main" == "missing" ]]; then
+      die "Cannot resolve local 'main' or 'origin/main'. Ensure both refs exist."
+    fi
+    if [[ "$local_main" != "$remote_main" ]]; then
+      local relation
+      if git merge-base --is-ancestor "$local_main" "$remote_main" 2>/dev/null; then
+        relation="behind origin/main"
+      elif git merge-base --is-ancestor "$remote_main" "$local_main" 2>/dev/null; then
+        relation="ahead of origin/main"
+      else
+        relation="diverged from origin/main"
+      fi
+      die "Local 'main' is $relation. Refusing to deploy a different commit than what's on origin.
+  local  main: $local_main
+  origin/main: $remote_main
+
+  Fix:
+    git checkout main
+    git pull --ff-only origin main"
+    fi
+  fi
+
+  # --- Pre-deploy banner ---
+  echo ""
+  echo "  ------------------------------------------------------------"
+  echo "  PackTrack deploy"
+  echo "  branch:  $branch"
+  echo "  sha:     $sha"
+  echo "  version: $pkg_version"
+  echo "  alembic: $alembic_head"
+  echo "  target:  PVE_HOST=${PVE_HOST}  LXC_ID=${LXC_ID}"
+  echo "  ------------------------------------------------------------"
+  echo ""
+}
+
 preflight_local() {
   need ssh
   need tar
@@ -220,6 +381,7 @@ deploy_via_pve() {
     "pct exec ${LXC_ID} -- env APP_DIR='${APP_DIR}' UPLOAD_DIR='${UPLOAD_DIR}' ENV_FILE='${ENV_FILE}' FIRST_RUN='${FIRST_RUN}' SRC_TGZ=/tmp/packtrack-src.tgz bash -lc $(printf %q "$remote_script")"
 }
 
+guard_repo_state
 preflight_local
 bundle="$(make_bundle)"
 trap 'rm -f "$bundle"' EXIT
