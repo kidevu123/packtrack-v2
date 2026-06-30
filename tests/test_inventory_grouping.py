@@ -127,6 +127,11 @@ def test_push_item_update_parks_pending(session: Session):
 
 
 def test_inbound_sync_preserves_pending_owner_edit(session: Session):
+    """v2.11.0 stock ownership: inbound sync on an EXISTING item
+    (is_new=False) preserves pending name/description/unit edits, still
+    updates Zoho-owned vendor, and CRUCIALLY does NOT overwrite
+    current_stock — it records the upstream value as a snapshot only.
+    """
     it = _add(session, "FIX Local Name", vendor="Owner Vendor", current_stock=5.0)
     it.zoho_push_status = "pending"
     session.add(it)
@@ -141,20 +146,26 @@ def test_inbound_sync_preserves_pending_owner_edit(session: Session):
         "unit": "boxes",
         "actual_available_stock": 99,
     }
-    zoho._apply_item_sync_fields(it, raw)
+    zoho._apply_item_sync_fields(it, raw, is_new=False)
 
-    # Pushable owner edits (name/description/unit) are preserved while pending...
+    # Pushable owner edits (name/description/unit) are preserved while pending.
     assert it.name == "FIX Local Name"
-    # ...but vendor is Zoho-read-only in PackTrack, so it always tracks Zoho...
+    # Vendor is Zoho-read-only in PackTrack, so it always tracks Zoho.
     assert it.vendor == "Zoho Vendor"
-    # ...and stock (not owner-editable) still tracks Zoho.
-    assert it.current_stock == 99.0
+    # v2.11.0 — current_stock is NOT overwritten on an existing item.
+    assert it.current_stock == 5.0
+    # The upstream value is recorded as a snapshot instead.
+    assert it.last_zoho_stock_snapshot is not None
+    assert float(it.last_zoho_stock_snapshot) == 99.0
+    assert it.last_zoho_stock_snapshot_at is not None
     # product_line stays in step with the preserved local name.
     assert it.product_line == "FIX Local"
 
 
 def test_inbound_sync_applies_when_not_pending(session: Session):
-    it = _add(session, "Old Name", vendor="Old Vendor")
+    """Existing item, no pending edit: name/vendor still update, but
+    current_stock is NOT overwritten under v2.11.0."""
+    it = _add(session, "Old Name", vendor="Old Vendor", current_stock=7.0)
     it.zoho_push_status = None
     session.add(it)
     session.commit()
@@ -165,6 +176,9 @@ def test_inbound_sync_applies_when_not_pending(session: Session):
         "vendor_name": "New Zoho Vendor",
         "actual_available_stock": 3,
     }
-    zoho._apply_item_sync_fields(it, raw)
+    zoho._apply_item_sync_fields(it, raw, is_new=False)
     assert it.name == "New Zoho Name"
     assert it.vendor == "New Zoho Vendor"
+    # v2.11.0 — local stock untouched.
+    assert it.current_stock == 7.0
+    assert float(it.last_zoho_stock_snapshot) == 3.0

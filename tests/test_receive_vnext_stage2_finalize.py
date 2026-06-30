@@ -672,8 +672,11 @@ def test_alembic_head_unchanged():
     head advances again to ``g3h4i5j6k7l8``. v2.10.0 adds
     ``zoho_sync_warning`` + ``sync_attempt_count`` columns on
     ``inventory_adjustments`` so the head advances to ``h4i5j6k7l8m9``.
-    There must still be exactly one head — branches here mean two
-    migrations created in parallel without a merge rev.
+    v2.11.0 adds ``last_zoho_stock_snapshot`` +
+    ``last_zoho_stock_snapshot_at`` columns on ``items`` so the head
+    advances to ``i5j6k7l8m9n0``. There must still be exactly one
+    head — branches here mean two migrations created in parallel
+    without a merge rev.
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
@@ -681,7 +684,7 @@ def test_alembic_head_unchanged():
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
     heads = sd.get_heads()
     assert len(heads) == 1
-    assert heads[0] == "h4i5j6k7l8m9"
+    assert heads[0] == "i5j6k7l8m9n0"
 
 
 # ---------------------------------------------------------------------------

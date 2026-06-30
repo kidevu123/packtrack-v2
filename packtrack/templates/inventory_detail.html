@@ -379,6 +379,10 @@
         <span class="text-3xl font-semibold tabular-nums leading-none {{ 'text-red-600' if stock_tone == 'danger' else 'text-amber-700' if stock_tone == 'warn' else 'text-stone-900' }}">{{ it.current_stock|qty }}</span>
         <span class="text-sm text-stone-400">{{ it.unit }} on hand</span>
       </div>
+      <p class="mt-1 text-[10px] uppercase tracking-wider text-emerald-700/80"
+         data-testid="stock-source-of-truth">
+        PackTrack · source of truth
+      </p>
       <dl class="mt-4 space-y-2 text-sm">
         <div class="flex items-center justify-between gap-2">
           <dt class="text-stone-500">Status</dt><dd>{{ ui.status_badge(stock_label, tone=stock_tone, size="sm") }}</dd>
@@ -403,6 +407,43 @@
         </div>
         {% endif %}
       </dl>
+      {# v2.11.0 — Zoho stock snapshot (informational only). The inbound
+         Zoho item sync records the upstream value here; PackTrack
+         adjustments are the only writer of the live current_stock. #}
+      {% if it.last_zoho_stock_snapshot is not none %}
+        <div class="mt-3 pt-3 border-t border-stone-100" data-testid="zoho-stock-snapshot">
+          <div class="flex items-baseline justify-between gap-2">
+            <p class="text-[10px] uppercase tracking-wider text-stone-400">
+              Zoho snapshot
+              <span class="font-normal text-stone-300 normal-case">· informational</span>
+            </p>
+            {% if zoho_stock_variance is not none and zoho_stock_variance != 0 %}
+              <span class="text-[10px] font-mono uppercase tracking-wider {{ 'text-amber-700' if zoho_stock_variance > 0 else 'text-red-700' }}"
+                    data-testid="zoho-stock-variance"
+                    title="PackTrack minus Zoho">
+                Δ {{ '+' if zoho_stock_variance > 0 else '' }}{{ zoho_stock_variance }}
+              </span>
+            {% elif zoho_stock_variance == 0 %}
+              <span class="text-[10px] font-mono uppercase tracking-wider text-emerald-700"
+                    data-testid="zoho-stock-variance">in sync</span>
+            {% endif %}
+          </div>
+          <div class="flex items-baseline gap-2 mt-1">
+            <span class="text-lg tabular-nums text-stone-700"
+                  data-testid="zoho-stock-value">{{ it.last_zoho_stock_snapshot }}</span>
+            <span class="text-xs text-stone-400">{{ it.unit }}</span>
+            {% if it.last_zoho_stock_snapshot_at %}
+              <span class="text-[10px] text-stone-400 ml-auto">
+                {{ it.last_zoho_stock_snapshot_at.strftime('%Y-%m-%d %H:%M') }}
+              </span>
+            {% endif %}
+          </div>
+          <p class="text-[10px] text-stone-400 mt-1">
+            Zoho stock is read-only here; record an adjustment to change PackTrack stock.
+          </p>
+        </div>
+      {% endif %}
+
       {# v2.9.0 — quantity-adjustment entry points. PackTrack is the local
          source of truth for packaging quantity; Zoho is updated later
          (and only via zoho-integration-service). #}
