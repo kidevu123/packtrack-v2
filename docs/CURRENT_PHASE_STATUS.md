@@ -1,6 +1,30 @@
 # Current Phase Status
 
-## v2.11.0 — Stock ownership policy: PackTrack owns Item.current_stock; Zoho is snapshot-only (feature branch, NOT yet deployed)
+## v2.12.0 — Item master-data editor (resumed from stale v2.8.0 branch onto current main) (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-masterdata-editor-v2.12.0` (off `origin/main`, in a separate worktree). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged from v2.11.0). The editor writes Zoho master-data through the integration service; nothing PackTrack-local needs a new column. |
+| **Origin of editor code** | Ported from the stale `feature/inventory-masterdata-editor-v2.8.0` @ `b643b4e` (single squashed commit, 9 PRs behind main). True rebase would have conflicted massively, so the three core editor files were brought across wholesale (`packtrack/services/zoho_item_sync.py`, `packtrack/services/zoho_item_detail.py`, `packtrack/routes/inventory.py`) and the route's `_render_item_detail` was extended to also thread `zoho_stock_variance` (v2.11.0) into the template context. The template was rebuilt by taking the stale editor body and splicing the v2.11.0 Stock card (PackTrack source-of-truth label, Zoho snapshot, variance pill, Adjust quantity + History buttons) in place of the stale stock section. |
+| **Status** | Code complete; tests green (420 passed; +13 net over v2.11.0's 407 — added `tests/test_inventory_masterdata_editor.py` with 475 lines / 27 cases, deleted the obsolete `tests/test_inventory_cf_product_line_edit.py`, ported the editor-aware versions of `test_zoho_item_sync.py` / `test_inventory_grouping.py` / `test_inventory_item_detail_extended.py` / `test_inventory_detail.py`); **not merged, not deployed, not tagged**. |
+
+**v2.12.0 scope** — finishes the item master-data editor work that was started on the stale v2.8.0 branch and parked while the v2.7.x → v2.11.0 line shipped. PackTrack's item detail page becomes a real metadata-driven editor for Zoho master-data, using zoho-integration-service v1.34.1's writable allowlist.
+
+* **Editable Zoho master-data fields** — standard: `name`, `description`, `unit`, `brand`, `manufacturer`, `category_id`. Custom (by api_name): `cf_item_type`, `cf_delivery_method`, `cf_item_size`, `cf_dosage`, `cf_pack_count`, `cf_market_value`, `cf_display_size`, `cf_product_line`, `cf_flavor_scent`, `cf_package_type`, `cf_formulation`, `cf_pack_dimension`, `cf_unit_size`, `cf_case_size`, `cf_description`. Category is a dropdown from live metadata; dropdown custom fields use live metadata options; numeric customs validate as numbers; metadata unavailable → soft fallback to read-only with a warning.
+* **Intentionally read-only on this surface** — `current_stock`, `last_zoho_stock_snapshot`, `last_zoho_stock_snapshot_at`, stock variance, vendor / preferred vendor, sku, cost_price, selling_price, sales/purchase/inventory accounts, valuation_method, stock_on_hand / available_stock / committed_stock, reporting_tags, item_type / product_type / status, tax fields, image fields, any unknown field. The form never even **collects** these — there's no submit path that can mutate them.
+* **Service call shape** — `push_item_update(session, item, *, payload, client=None)` sends one combined PATCH through `zoho-integration-service` with only the changed standard fields and a `custom_fields: {api_name: value}` map. Empty string clears a custom field. No `customfield_id` is ever sent. No option-creation path exists. PackTrack still **never** calls Zoho directly.
+* **Validation is server-side, all-or-nothing** — if any changed field fails validation (category not in metadata, dropdown value not allowed, numeric won't parse, unknown / read-only field), nothing is written to Zoho and the form re-renders with inline errors + the submitted values preserved.
+* **Stock policy strictly preserved** — the editor never collects, validates, or sends `current_stock` or any snapshot field. The v2.9.0 inventory adjustment ledger remains the only path that mutates `Item.current_stock` from the UI. The v2.10.0 adjustment-to-Zoho sync still works. The v2.11.0 inbound-sync overwrite ban still holds. Item-detail Stock card still shows `PackTrack · source of truth`, the Zoho snapshot block, the variance pill, the Adjust quantity button and the History link — all spliced in carefully on top of the stale template body.
+* **PackTrack derived `product_line`** stays separate from Zoho's `cf_product_line` custom field. Two different things — the derived browsing group is recomputed from the name; the Zoho field is a dropdown option set by the editor.
+
+**Tests (+13 net cases, total 420)** — new `tests/test_inventory_masterdata_editor.py` (27 cases) is the editor's end-to-end contract; ported `tests/test_zoho_item_sync.py` / `tests/test_inventory_grouping.py` / `tests/test_inventory_item_detail_extended.py` / `tests/test_inventory_detail.py` to the new `push_item_update(payload=…)` signature while preserving every v2.11.0 stock-policy assertion (`test_inbound_sync_preserves_pending_owner_edit` keeps the v2.11.0 snapshot expectations); deleted the obsolete single-field `tests/test_inventory_cf_product_line_edit.py`. All 49 v2.9.0/v2.10.0 inventory-adjustment tests still pass. All 25 v2.11.0 stock-ownership tests still pass.
+
+**Hard contract preserved.** PackTrack still never calls Zoho directly — only `zoho-integration-service`. No Receiving file touched. v2.9.0 source-level guard on `services/inventory_adjustments.py` still passes (no httpx / no Zoho / no OAuth). v2.10.0 source-level guard on `services/zoho_adjustment_client.py` still passes. v2.11.0 source-level guard on `services/inventory_stock_policy.py` still passes. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.11.0 — Stock ownership policy: PackTrack owns Item.current_stock; Zoho is snapshot-only (deployed + tagged via merge into main)
 
 | | |
 |---|---|

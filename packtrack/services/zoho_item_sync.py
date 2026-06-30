@@ -13,24 +13,34 @@ Auth: ``Authorization: Bearer <ZOHO_INTEGRATION_APP_TOKEN>`` + ``X-Brand`` (the
 same scheme the receive endpoints use; ``X-Internal-Token`` is also sent for
 forward-compatibility but is not sufficient on its own).
 
-Only the service's writable allowlist is ever sent: ``name``, ``description``,
-``unit`` and — since v2.7.0 — the single Zoho dropdown custom field
-``cf_product_line`` (sent as ``custom_fields.cf_product_line``). The service does
-**not** support free-text vendor writes (a vendor PATCH returns
-``422 VENDOR_UPDATE_NOT_SUPPORTED``), so vendor is treated as Zoho-read-only in
-PackTrack and is never included in an outbound payload. No other custom field is
-ever sent and raw ``customfield_id`` values are never used.
+Since v2.8.0 the outbound write is a full (but allowlisted) item master-data
+PATCH. The caller (the item-detail route) computes a ``payload`` of *changed*
+fields and this module sends exactly that. The service's writable contract
+(v1.33.0) is the allowlist:
 
-``cf_product_line`` (Zoho custom field) note
---------------------------------------------
-This is the Zoho dropdown custom field (options 7OH / MIT A / MIT B), NOT
-PackTrack's derived ``Item.product_line`` browsing group (FIX / FIX Beyond /
-Unassigned). The two are kept strictly separate. The selected value is **not**
-persisted in a local PackTrack column; the extended Zoho item detail is the
-source of truth. A consequence is that a *failed* ``cf_product_line`` push cannot
-be re-sent by the generic "Retry sync" action (which only re-pushes the locally
-stored name/description/unit). Retrying simply re-asserts those scalar fields;
-the owner re-selects the dropdown to retry a custom-field write.
+* standard: ``name``, ``description``, ``unit``, ``brand``, ``manufacturer``,
+  ``category_id``
+* ``custom_fields`` (by ``api_name`` only): the safe packaging set, including the
+  ``cf_product_line`` dropdown.
+
+The service does **not** support free-text vendor writes (a vendor PATCH returns
+``422 VENDOR_UPDATE_NOT_SUPPORTED``), so vendor is Zoho-read-only in PackTrack and
+is never included. No read-only field, no raw ``customfield_id`` and no unknown
+field is ever sent — the route only ever builds the payload from the metadata
+allowlist + live validation, and the service re-validates all-or-nothing.
+
+Local mirror & retry honesty
+----------------------------
+Only ``name``/``description``/``unit`` are mirrored in local ``Item`` columns;
+``brand``/``manufacturer``/``category_id`` and all custom fields live only in Zoho
+(the extended item detail is the source of truth). The generic "Retry sync"
+action can therefore only re-assert the locally stored scalar trio
+(:func:`scalar_payload`); master-data / custom-field edits that failed are
+re-applied by the owner re-submitting the edit form, not silently replayed.
+
+``cf_product_line`` (Zoho custom field) is NOT PackTrack's derived
+``Item.product_line`` browsing group (FIX / FIX Beyond / Unassigned). The two are
+kept strictly separate and never merged.
 
 State machine on ``Item``
 -------------------------
@@ -69,14 +79,15 @@ ZOHO_OWNED_EDITABLE_FIELDS: frozenset[str] = frozenset(
     {"name", "description", "unit"}
 )
 
-# The service's PATCH writable allowlist — the only scalar keys we ever send.
-_PATCH_FIELDS: tuple[str, ...] = ("name", "description", "unit")
+# Standard writable keys (v1.33.0 service contract). category_id is included in
+# outbound payloads only; the local Item never stores brand/manufacturer/category.
+WRITABLE_STANDARD_FIELDS: tuple[str, ...] = (
+    "name", "description", "unit", "brand", "manufacturer", "category_id",
+)
 
-# The only Zoho custom field PackTrack may write (v2.7.0). Sent under
-# ``custom_fields`` as ``{"cf_product_line": "<option name or empty string>"}``.
-# The integration service validates the value against live Zoho options and
-# never creates new options. An empty string clears the field.
-CF_PRODUCT_LINE: str = "cf_product_line"
+# The locally-mirrored Zoho scalar trio — the only fields the generic retry can
+# honestly re-send (see module docstring).
+_SCALAR_MIRROR_FIELDS: tuple[str, ...] = ("name", "description", "unit")
 
 _ITEMS_PATH = "/zoho/pack_track/items"
 
@@ -254,42 +265,34 @@ def _align_from_service(item: Item, normalized: dict[str, Any]) -> None:
         item.unit = unit[:40]
 
 
-def _outbound_payload(
-    item: Item,
-    cf_product_line: str | None = None,
-) -> dict[str, Any]:
-    """Build the PATCH body from the writable allowlist (never vendor).
+def scalar_payload(item: Item) -> dict[str, Any]:
+    """The locally-reconstructable Zoho scalar trio (name/description/unit).
 
-    Always includes the scalar allowlist (name/description/unit). When
-    ``cf_product_line`` is not ``None`` it is added under ``custom_fields`` —
-    an empty string clears the Zoho field, a non-empty string sets the option.
-    No other custom field and no raw ``customfield_id`` is ever included.
+    Used by the generic retry path, which can only honestly re-assert the
+    fields PackTrack mirrors locally.
     """
-    payload: dict[str, Any] = {
+    return {
         "name": item.name,
         "description": item.description or "",
         "unit": item.unit,
     }
-    if cf_product_line is not None:
-        payload["custom_fields"] = {CF_PRODUCT_LINE: cf_product_line}
-    return payload
 
 
 def push_item_update(
     session: Session,
     item: Item,
     *,
-    cf_product_line: str | None = None,
+    payload: dict[str, Any],
     client: httpx.Client | None = None,
 ) -> ItemPushResult:
-    """Push an owner's item edit to Zoho via the integration service.
+    """Push an owner's item master-data edit to Zoho via the integration service.
 
-    ``cf_product_line`` (optional): when not ``None`` the Zoho dropdown custom
-    field is written too (``""`` clears it). The value must already be validated
-    by the caller against the live metadata options; the service re-validates and
-    rejects unknown values. It is never persisted locally (the extended Zoho item
-    detail is the source of truth), so a failed custom-field push is not replayed
-    by the generic retry path — see the module docstring.
+    ``payload`` is the dict of *changed* fields to PATCH — standard keys
+    (``name``/``description``/``unit``/``brand``/``manufacturer``/``category_id``)
+    and/or a ``custom_fields`` dict keyed by ``api_name``. The caller is
+    responsible for building it only from the metadata allowlist + live
+    validation; the service re-validates all-or-nothing and rejects unknown /
+    read-only fields. Must be non-empty.
 
     Always records ``zoho_push_attempted_at`` and never raises:
 
@@ -303,6 +306,14 @@ def push_item_update(
     """
     item.zoho_push_attempted_at = datetime.utcnow()
 
+    if not payload:
+        # Defensive: nothing to send. Treat as a no-op success without a call.
+        item.zoho_push_status = PUSH_SYNCED
+        item.zoho_push_error = None
+        session.add(item)
+        session.commit()
+        return ItemPushResult(PUSH_SYNCED)
+
     if not item.zoho_item_id or not item_write_path_available():
         item.zoho_push_status = PUSH_PENDING
         item.zoho_push_error = None
@@ -314,7 +325,6 @@ def push_item_update(
         )
         return ItemPushResult(PUSH_PENDING)
 
-    payload = _outbound_payload(item, cf_product_line=cf_product_line)
     try:
         body = _patch_item(item.zoho_item_id, payload, client=client)
     except ItemSyncError as exc:
