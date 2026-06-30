@@ -614,9 +614,13 @@ def test_non_owner_cannot_retry(session, engine, monkeypatch):
     assert resp.status_code == 403
 
 
-def test_retry_on_synced_row_is_no_op(
+def test_retry_on_synced_row_is_refused_and_no_op(
     session, engine, monkeypatch, integration_settings,
 ):
+    """v2.16.3 retry-safety contract: a SYNCED row is now refused at the
+    route gate with 409 (was a silent no-op redirect in v2.10.0). The
+    "no HTTP call, no state change" invariant from v2.10.0 still holds;
+    only the response shape tightened."""
     _seed_user(session)
     item = _seed_item(session)
     user = session.exec(select(User)).first()
@@ -641,7 +645,6 @@ def test_retry_on_synced_row_is_no_op(
     mock_client, _rec = make_client(handler)
 
     def patched(s, adj, it, *, actor, http_client=None):
-        # Use the real orchestrator with our http_client; should no-op.
         from packtrack.services.inventory_adjustment_sync import (
             try_sync_adjustment as _real,
         )
@@ -656,7 +659,8 @@ def test_retry_on_synced_row_is_no_op(
         f"/inventory/adjustments/{result.adjustment.id}/sync",
         follow_redirects=False,
     )
-    assert resp.status_code in (302, 303)
+    assert resp.status_code == 409
+    assert "already synced" in resp.json()["error"].lower()
     assert handler_calls == []  # no HTTP call for already-SYNCED row
     session.refresh(result.adjustment)
     assert result.adjustment.zoho_sync_status is ZohoSyncStatus.SYNCED

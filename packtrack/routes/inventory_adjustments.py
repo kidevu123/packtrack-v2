@@ -29,7 +29,10 @@ from packtrack.models import (
     User,
     ZohoSyncStatus,
 )
-from packtrack.services.inventory_adjustment_sync import try_sync_adjustment
+from packtrack.services.inventory_adjustment_sync import (
+    retry_eligibility,
+    try_sync_adjustment,
+)
 from packtrack.services.inventory_adjustments import (
     REASON_LABELS,
     AdjustmentError,
@@ -95,6 +98,17 @@ def _parse_reason(raw: str) -> AdjustmentReason:
         raise HTTPException(
             status_code=400, detail=f"Unknown reason code {raw!r}.",
         ) from None
+
+
+def _eligibility_map(
+    session: Session, rows: list[InventoryAdjustment],
+) -> dict[int, object]:
+    """Per-row retry eligibility for the history template (v2.16.3).
+
+    The template renders the Retry button (or its blocked-with-reason
+    label) from this map so the UI gate stays in lock-step with the
+    server-side POST gate."""
+    return {r.id: retry_eligibility(session, r) for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +239,7 @@ def item_adjustment_history(
             "rows": rows,
             "reason_labels": REASON_LABELS,
             "is_owner": user.role == Role.OWNER,
+            "retry_eligibility": _eligibility_map(session, rows),
             "flash": flash,
             "filter_item": item,
             "global_view": False,
@@ -276,6 +291,7 @@ def global_adjustment_history(
             "item_lookup": item_lookup,
             "reason_labels": REASON_LABELS,
             "is_owner": user.role == Role.OWNER,
+            "retry_eligibility": _eligibility_map(session, rows),
             "filter_item": filter_item,
             "filter_reason": reason or "",
             "filter_sync_status": sync_status or "",
@@ -322,6 +338,15 @@ def retry_adjustment_sync(
             status_code=409,
             detail="Adjustment's item no longer exists; cannot sync.",
         )
+
+    # v2.16.3 — refuse the retry if it would push to Zoho an adjustment
+    # that PackTrack has already voided/reversed locally, or whose
+    # reversal-pair is incoherent. The check is read-only; the gate
+    # mirrors the UI's "Retry blocked" label so the operator gets the
+    # same answer whether they click the button or POST directly.
+    eligibility = retry_eligibility(session, adjustment)
+    if not eligibility.allowed:
+        raise HTTPException(status_code=409, detail=eligibility.detail)
 
     outcome = try_sync_adjustment(session, adjustment, item, actor=user)
     return RedirectResponse(

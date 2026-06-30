@@ -135,6 +135,7 @@
             </td>
             <td class="px-4 py-2 text-right tabular-nums font-medium">{{ r.quantity_after }}</td>
             <td class="px-4 py-2" data-testid="adjustment-sync-cell-{{ r.id }}">
+              {% set elig = retry_eligibility.get(r.id) if retry_eligibility else none %}
               <div class="flex items-baseline gap-2 flex-wrap">
                 <span class="text-[11px] font-mono uppercase tracking-wider
                   {%- if r.zoho_sync_status.value == 'synced' %} text-emerald-700
@@ -149,7 +150,11 @@
                     ×{{ r.sync_attempt_count }}
                   </span>
                 {% endif %}
-                {% if is_owner and r.zoho_sync_status.value in ('failed', 'pending', 'not_configured', 'skipped') %}
+                {# v2.16.3 — the Retry button is rendered ONLY when the
+                   server's retry_eligibility check says the row is
+                   safe. The check mirrors the route-side gate exactly,
+                   so a hidden button == a refused POST. #}
+                {% if is_owner and elig and elig.allowed %}
                   <form method="post"
                         action="/inventory/adjustments/{{ r.id }}/sync"
                         class="inline"
@@ -159,6 +164,16 @@
                       Retry
                     </button>
                   </form>
+                {% elif is_owner and elig and not elig.allowed and r.zoho_sync_status.value != 'synced' %}
+                  {# SYNCED rows show no "blocked" copy — the status tag
+                     already says "synced". For every other block reason
+                     surface the operator copy inline. #}
+                  <span class="text-[10px] text-stone-500 italic"
+                        data-testid="adjustment-retry-blocked-{{ r.id }}"
+                        data-retry-block-reason="{{ elig.reason.value }}"
+                        title="{{ elig.detail }}">
+                    {{ elig.detail }}
+                  </span>
                 {% endif %}
               </div>
               {% if r.zoho_reference %}
