@@ -1,6 +1,31 @@
 # Current Phase Status
 
-## v2.13.0 — Receiving launch readiness: CSV template + preview UX + PO diagnostic + operator runbook (feature branch, NOT yet deployed)
+## v2.14.0 — Inventory cycle-count batch workflow (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-cycle-count-v2.14.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged from v2.11.0). **No schema change** — the v2.9.0 `inventory_adjustments` table + the `AdjustmentSource.CYCLE_COUNT` enum value already exist; the batch service writes through the existing rows. |
+| **Status** | Code complete; tests green (466 passed; +24 over v2.13.0's 442); **not merged, not deployed, not tagged**. |
+
+**v2.14.0 scope** — adds the batch cycle-count workflow on top of the v2.9.0 immutable adjustment ledger.
+
+* **New service** `packtrack/services/cycle_count.py` — `submit_cycle_count(session, *, actor, inputs, shared_note=None, http_client=None) -> BatchOutcome`. Validates **all rows up front** (all-or-nothing). For each row with a non-zero variance: delegates to the existing `services.inventory_adjustments.create_adjustment` (same transactional row-lock + immutable insert + `Item.current_stock` update path the single-item flow uses) with `mode=SET_QUANTITY`, `source=CYCLE_COUNT`, `reason_code=CYCLE_COUNT_CORRECTION`. After local persistence, invokes `services.inventory_adjustment_sync.try_sync_adjustment` per row through the existing v2.10.0 path. A failed Zoho sync **never** rolls back local stock (v2.11.0 ownership policy). The service NEVER writes `Item.current_stock` directly and NEVER imports a Zoho client.
+* **New routes** in `packtrack/routes/cycle_count.py`:
+  * `GET /inventory/cycle-count` — owner-only form with every item listed, a shared-note field, per-row `counted_{item_id}` input + per-row `note_{item_id}` input, and a live client-side filter over name/material_code/SKU.
+  * `POST /inventory/cycle-count` — owner-only submit. Empty submission (no `counted_*` values) re-renders the form with a soft warning. Validation failure re-renders the form with inline errors, the submitted values preserved, and a 400 — nothing is applied. Success renders a result page with per-row outcome + sync status + a summary chip block.
+* **UI entry point** — owner-only "Cycle count" link added to the inventory page header `secondary` action set, between `Export CSV` and `Sync now`.
+* **All-or-nothing validation** — single bad row (negative quantity / non-numeric / unknown item / duplicate item / would push stock negative) blocks every other row. No partial application.
+* **Zero variance** — silently skipped by default. Surfaced in the result summary chip ("Skipped (zero variance)") and per-row table for traceability.
+* **Notes precedence** — per-row note → shared batch note → default `"Cycle count adjustment"`. Operator notes preserved verbatim in PackTrack; integration-service owns Zoho-facing description sanitization (v1.34.1).
+
+**Tests (+24 cases, total 466)** in `tests/test_v2_14_0_cycle_count.py` — owner GET + non-owner 403 on GET and POST · empty submission soft warning · zero variance skipped · positive/negative variance creates correct adjustment · negative counted rejected · invalid decimal rejected · all-or-nothing (one bad row prevents the good row from applying) · created adjustment carries `SET_QUANTITY`/`CYCLE_COUNT`/`CYCLE_COUNT_CORRECTION` · `Item.current_stock` only changes through `create_adjustment` (monkeypatch-proof) · Zoho sync invoked per row through the existing v2.10.0 path · failed Zoho sync leaves local stock advanced · per-row note overrides shared note · blank note defaults to "Cycle count adjustment" · single-item adjustment route still works (regression) · history pages reflect cycle-count rows · duplicate item id in batch rejected · source-level guard (no Zoho/OAuth literal) · master-data unchanged · no Receiving mention · UI link shown to owner, hidden from non-owner.
+
+**Hard contract preserved.** No schema change. PackTrack still never calls Zoho directly. No Receiving file touched. v2.9.0/v2.10.0/v2.11.0/v2.12.0 contracts intact (49 inventory-adjustment tests, 25 stock-ownership tests, all master-data editor tests still pass). Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.13.0 — Receiving launch readiness: CSV template + preview UX + PO diagnostic + operator runbook (deployed + tagged via merge into main)
 
 | | |
 |---|---|

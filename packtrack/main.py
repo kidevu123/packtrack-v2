@@ -27,6 +27,7 @@ from packtrack.db import engine
 from packtrack.routes import (
     admin,
     auth,
+    cycle_count,
     forecast,
     inbox,
     internal,
@@ -168,6 +169,10 @@ app.include_router(inventory.router)
 # '/inventory/{item_id:int}' route (FastAPI resolves in registration
 # order; the :int cast on the inventory route also helps).
 app.include_router(inventory_adjustments.router)
+# Cycle-count (v2.14.0) — registered AFTER inventory + adjustments so
+# the static '/inventory/cycle-count' path wins over the dynamic
+# '/inventory/{item_id:int}' inventory-detail route.
+app.include_router(cycle_count.router)
 app.include_router(receiving.router)
 # Receiving vNext (v2.5.0 Stage 1) — every route guarded by
 # settings.RECEIVING_VNEXT_ENABLED at the dependency layer, so when the

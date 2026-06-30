@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Cycle count complete · PackTrack{% endblock %}
+{% block container_class %}max-w-6xl{% endblock %}
+{% block content %}
+
+{{ ui.page_header(
+     title="Cycle count complete",
+     subtitle="Batch processed. Local stock is updated; sync runs per row.",
+     secondary=[
+       {"label": "← Inventory", "href": "/inventory"},
+       {"label": "Global adjustment history", "href": "/inventory/adjustments"},
+       {"label": "Run another", "href": "/inventory/cycle-count"},
+     ],
+) }}
+
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"
+     data-testid="cycle-count-result-summary">
+  {{ ui.summary_card(label="Adjustments created",
+                     value=outcome.created_count, tone="ok") }}
+  {{ ui.summary_card(label="Skipped (zero variance)",
+                     value=outcome.skipped_count, tone="neutral") }}
+  {{ ui.summary_card(label="Synced to Zoho",
+                     value=outcome.sync_counts.get('synced', 0),
+                     tone="ok" if outcome.sync_counts.get('synced', 0) else "neutral") }}
+  {{ ui.summary_card(label="Sync failed",
+                     value=outcome.sync_counts.get('failed', 0),
+                     tone="danger" if outcome.sync_counts.get('failed', 0) else "neutral") }}
+</div>
+
+{% if outcome.sync_counts.get('not_configured', 0) %}
+  <div class="bg-stone-50 border border-stone-200 rounded-2xl p-3 mb-5 text-xs text-stone-600">
+    {{ outcome.sync_counts.get('not_configured', 0) }} row(s) marked
+    <span class="font-mono">NOT_CONFIGURED</span> — Zoho adjust sync is off.
+    PackTrack stock is the source of truth; flip
+    <code class="font-mono">ZOHO_INTEGRATION_ADJUST_ENABLED</code> and re-sync
+    individual rows from history if needed.
+  </div>
+{% endif %}
+
+<div class="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden">
+  <table class="w-full text-sm" data-testid="cycle-count-result-table">
+    <thead class="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-400">
+      <tr>
+        <th class="text-left font-semibold px-4 py-2">Item</th>
+        <th class="text-right font-semibold px-4 py-2">Before</th>
+        <th class="text-right font-semibold px-4 py-2">Counted</th>
+        <th class="text-right font-semibold px-4 py-2">Δ</th>
+        <th class="text-left font-semibold px-4 py-2">Outcome</th>
+        <th class="text-left font-semibold px-4 py-2">Sync</th>
+        <th class="text-left font-semibold px-4 py-2">Note</th>
+      </tr>
+    </thead>
+    <tbody class="text-stone-700 divide-y divide-stone-100">
+      {% for r in outcome.rows %}
+        <tr data-testid="cycle-count-result-row-{{ r.item_id }}">
+          <td class="px-4 py-2">
+            <a href="/inventory/{{ r.item_id }}/adjustments"
+               class="text-stone-900 hover:underline">{{ r.item_name }}</a>
+          </td>
+          <td class="px-4 py-2 text-right tabular-nums">{{ r.quantity_before }}</td>
+          <td class="px-4 py-2 text-right tabular-nums">{{ r.quantity_after }}</td>
+          <td class="px-4 py-2 text-right tabular-nums {{ 'text-emerald-700' if r.quantity_delta > 0 else ('text-red-700' if r.quantity_delta < 0 else 'text-stone-400') }}">
+            {% if r.quantity_delta > 0 %}+{% endif %}{{ r.quantity_delta }}
+          </td>
+          <td class="px-4 py-2">
+            {% if r.kind == 'created' %}
+              <a href="/inventory/{{ r.item_id }}/adjustments"
+                 class="text-[11px] font-mono text-stone-700 hover:underline">
+                {{ r.adjustment_number }}
+              </a>
+            {% else %}
+              <span class="text-[11px] uppercase tracking-wider text-stone-400">
+                skipped · no variance
+              </span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2">
+            {% if r.sync_status %}
+              <span class="text-[11px] font-mono uppercase tracking-wider
+                {%- if r.sync_status.value == 'synced' %} text-emerald-700
+                {%- elif r.sync_status.value == 'failed' %} text-red-700
+                {%- elif r.sync_status.value == 'pending' %} text-amber-700
+                {%- else %} text-stone-400{% endif %}">
+                {{ r.sync_status.value }}
+              </span>
+              {% if r.sync_error %}
+                <div class="text-[10px] text-red-700 max-w-xs truncate"
+                     title="{{ r.sync_error }}">
+                  {{ r.sync_error }}
+                </div>
+              {% endif %}
+            {% else %}
+              <span class="text-stone-400">—</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 text-[11px] text-stone-500 italic max-w-xs truncate"
+              title="{{ r.note_used }}">
+            {{ r.note_used }}
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="7" class="px-4 py-6 text-center text-sm text-stone-500">
+            Nothing to report — every row had zero variance and was skipped.
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-5 flex items-center justify-between">
+  <a href="/inventory" class="text-sm text-stone-500 hover:text-stone-900">← Back to inventory</a>
+  <a href="/inventory/cycle-count"
+     class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+    Run another cycle count
+  </a>
+</div>
+
+{% endblock %}
