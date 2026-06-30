@@ -1,12 +1,47 @@
 # Current Phase Status
 
-## v2.16.1 — Deploy safety guard + branch/worktree cleanup (feature branch, NOT yet deployed)
+## v2.16.2 — Item detail editor: input affordance polish (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/inventory-input-affordance-v2.16.2` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). No schema change. |
+| **Status** | Code complete; tests green (506 passed; +7 over v2.16.1's 499); **not merged, not deployed, not tagged**. |
+| **UI-only** | No business logic change, no payload change, no Zoho/Receiving/adjustment file touched. Patch bump because `/healthz` should clearly identify the polished version. |
+
+**Why this release** — operators reported that editable Zoho fields on `/inventory/{id}` (Brand, Category, Standard description, Product Line, Description, packaging custom fields) were hard to distinguish from read-only text. Empty editable custom fields looked like blank space, with no visible input box to click into. The Tailwind v4 standalone build does not include `@tailwindcss/forms`, so without an explicit `border` utility class, form controls were inheriting near-invisible browser defaults inside the white cards.
+
+**v2.16.2 scope**
+
+* **Shared input affordance** — two new template-scoped Jinja variables, `_pt_editable_cls` and `_pt_readonly_cls`, define the visual contract for every input on `inventory_detail.html`:
+  * Editable: `mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm border-stone-300 transition-colors hover:border-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-200/60 focus:outline-none`
+  * Read-only / disabled: `mt-1 w-full rounded-lg border bg-stone-50 px-3 py-2 text-sm border-stone-200 text-stone-500 cursor-not-allowed`
+* **`data-pt-editable` contract attribute** — every form control in the editor now carries `data-pt-editable="true"` or `"false"`. This is the test hook, and it lets future code (analytics, accessibility tooling, e2e selectors) target editable vs read-only controls without scraping classes.
+* **Metadata-driven `field_input` macro** — converted from inline `base` concatenation to the shared variables. Affects every Zoho-side field (Brand, Manufacturer, Category, Standard description, all custom packaging fields).
+* **Hand-written Operational inputs** (Material code, Vendor, Daily usage rate, Reorder/Critical points, Sea/Express lead days) — rewritten to use the same shared variables so the entire form is visually consistent.
+* **Disabled Vendor input** (when `it.zoho_item_id` is set) — keeps the read-only styling and now carries `data-pt-editable="false"` explicitly.
+* **Read-only Zoho accounting & inventory section** — unchanged. It already uses `<dl><dt><dd>` plain text, so it remains visually distinct from the input cards above.
+
+**Tests (+7 cases, total 506)** in `tests/test_v2_16_2_input_affordance.py`:
+- editable inputs across the editor have all six affordance utilities (`border`, `bg-white`, `border-stone-300`, `hover:border-stone-400`, `focus:border-stone-500`, `focus:ring-2`)
+- editable controls span all three kinds (`<input>` + `<select>` + `<textarea>`)
+- empty editable custom fields still get the affordance — verifying the spec's "empty editable custom fields must show a visible input box"
+- disabled Vendor input keeps the read-only utilities (`bg-stone-50`, `text-stone-500`, `cursor-not-allowed`, `border-stone-200`)
+- non-owner sees every editor control flagged `data-pt-editable="false"` and lacking `bg-white`
+- Zoho accounting section contains no `data-pt-editable` inputs — i.e. read-only stays text, never gets misidentified as editable
+- Operational PackTrack section (`material_code`, `daily_usage_rate`, `reorder_point`, `critical_point`, `sea_lead_days`, `express_lead_days`) all carry the editable affordance
+
+**Hard contract preserved.** No business-logic change. No schema change. No save behavior change (payload + form name attributes unchanged). No Receiving file touched. No service file touched. `services/inventory_adjustments.py`, `services/zoho_item_sync.py`, `services/cycle_count.py` untouched. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0/v2.16.1 contracts intact. All 499 prior tests still pass. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.16.1 — Deploy safety guard + branch/worktree cleanup (deployed + tagged via merge into main)
 
 | | |
 |---|---|
 | **Branch** | `feature/deploy-safety-guard-v2.16.1` (off `origin/main`). |
 | **Alembic head** | `i5j6k7l8m9n0` (unchanged). No schema change. |
-| **Status** | Code complete; tests green (499 passed, unchanged); guard manual matrix 3/3 in-worktree (test 4 will pass on main after merge); **not merged, not deployed, not tagged**. |
+| **Status** | Merged via PR #21 (squash, `3598210`); deployed from main via the NEW guard; `/healthz` reports `version=2.16.1`; tagged `v2.16.1` at the deployed SHA. |
 | **Tooling-only** | No business logic change. Patch bump because `/healthz` should clearly identify the guarded version. |
 
 **Why this release exists** — production deploys have twice been run from a worktree on a feature branch (v2.7.4 and v2.16.0 incidents). The deployed code was correct both times but the audit trail said "deployed from feature branch", which is not the same as "deployed from main at origin/main". v2.16.1 ships a permanent guard so the operator cannot accidentally repeat the mistake.
