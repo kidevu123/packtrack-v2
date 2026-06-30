@@ -23,14 +23,22 @@ the integration service is idempotent on ``Idempotency-Key`` so a
 re-push would be safe, but we refuse to make the network call to keep
 the retry cheap. The route surfaces this as a friendly "already synced"
 message.
+
+v2.16.3 — retry eligibility (``retry_eligibility``) is the single
+authoritative gate for "can this adjustment be safely re-pushed to
+Zoho?". Route + UI both call it; the rules sit here so the same answer
+is given regardless of the caller. See the function docstring for the
+four rules and the bug they prevent.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 import httpx
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from packtrack.models import InventoryAdjustment, Item, User, ZohoSyncStatus
 from packtrack.services.zoho_adjustment_client import (
@@ -41,6 +49,141 @@ from packtrack.services.zoho_adjustment_client import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# v2.16.3 — retry-safety gate
+# ---------------------------------------------------------------------------
+
+
+class RetryBlockReason(StrEnum):
+    """Why a retry was refused. Strings double as machine-readable codes
+    (route response, telemetry, tests). Human copy lives in
+    ``_RETRY_BLOCK_MESSAGES`` below."""
+
+    ALREADY_SYNCED = "already_synced"
+    VOIDED = "voided_locally"
+    REVERSED_LOCALLY = "reversed_locally"
+    REVERSAL_OF_UNSYNCED = "reversal_of_unsynced"
+
+
+# Operator-facing copy for each block reason. Short — these render
+# inline in the history table next to the row.
+_RETRY_BLOCK_MESSAGES: dict[RetryBlockReason, str] = {
+    RetryBlockReason.ALREADY_SYNCED:
+        "Already synced — nothing to retry.",
+    RetryBlockReason.VOIDED:
+        "Voided locally — do not retry.",
+    RetryBlockReason.REVERSED_LOCALLY:
+        "Reversed locally — do not retry.",
+    RetryBlockReason.REVERSAL_OF_UNSYNCED:
+        "Original adjustment is not synced; pushing the reversal alone "
+        "would drift Zoho. Retry blocked.",
+}
+
+
+@dataclass(frozen=True)
+class RetryEligibility:
+    """Outcome of the retry-safety check.
+
+    ``allowed`` is the single boolean the route + UI act on. ``reason``
+    and ``detail`` are populated only when blocked, and identify which
+    rule fired (for tests + telemetry) and the human-readable text.
+    """
+
+    allowed: bool
+    reason: RetryBlockReason | None = None
+    detail: str = ""
+
+    @classmethod
+    def ok(cls) -> RetryEligibility:
+        return cls(allowed=True)
+
+    @classmethod
+    def block(cls, reason: RetryBlockReason, detail: str = "") -> RetryEligibility:
+        return cls(
+            allowed=False,
+            reason=reason,
+            detail=detail or _RETRY_BLOCK_MESSAGES[reason],
+        )
+
+
+def retry_eligibility(
+    session: Session, adjustment: InventoryAdjustment,
+) -> RetryEligibility:
+    """Decide whether ``adjustment`` can safely be (re-)pushed to Zoho.
+
+    READ-ONLY — never writes to the DB, never calls Zoho or the
+    integration service, never touches ``Item.current_stock``. Runs at
+    the start of the retry route AND in the history template so the
+    answer is identical at both gates.
+
+    Rules, in order — first match wins:
+
+    1. **SYNCED** — already pushed. The orchestrator no-ops anyway, but
+       blocking here keeps the UI honest ("Already synced", no button).
+
+    2. **VOIDED** — row was administratively voided (``voided_at`` set).
+       A void is a deliberate "this movement never should have happened
+       upstream"; retrying would contradict the void.
+
+    3. **REVERSED LOCALLY** — some other adjustment exists with
+       ``reversal_of_adjustment_id == self.id``. PackTrack has already
+       compensated this row's stock delta locally; pushing this row to
+       Zoho alone would create PT↔Zoho drift (the spec's core concern).
+
+    4. **REVERSAL OF UNSYNCED** — this row IS itself a reversal
+       (``reversal_of_adjustment_id`` set) AND the original it cancels
+       is not ``SYNCED``. Pushing only the reversal-half of a never-
+       synced pair would drift Zoho in the opposite direction. The pair
+       is incoherent until the original is reconciled.
+
+    All other rows — FAILED/PENDING/NOT_CONFIGURED/SKIPPED with no
+    void, no child reversal, and no unsynced-parent — remain retryable.
+    """
+    if adjustment.zoho_sync_status is ZohoSyncStatus.SYNCED:
+        return RetryEligibility.block(RetryBlockReason.ALREADY_SYNCED)
+
+    if adjustment.voided_at is not None:
+        return RetryEligibility.block(RetryBlockReason.VOIDED)
+
+    # Rule 3 — child rows that cancel this one. Match the FK and take
+    # the first hit; we don't need to enumerate all reversers.
+    child_reverser = session.exec(
+        select(InventoryAdjustment.id)
+        .where(InventoryAdjustment.reversal_of_adjustment_id == adjustment.id)
+        .limit(1)
+    ).first()
+    if child_reverser is not None:
+        return RetryEligibility.block(
+            RetryBlockReason.REVERSED_LOCALLY,
+            detail=(
+                f"Reversed locally by adjustment #{child_reverser} — "
+                "do not retry."
+            ),
+        )
+
+    # Rule 4 — this row is a reversal pointing at an unsynced original.
+    if adjustment.reversal_of_adjustment_id is not None:
+        original = session.get(
+            InventoryAdjustment, adjustment.reversal_of_adjustment_id,
+        )
+        if original is None or original.zoho_sync_status is not ZohoSyncStatus.SYNCED:
+            original_label = (
+                f"#{adjustment.reversal_of_adjustment_id}"
+                if original is None
+                else f"#{original.id} ({original.zoho_sync_status.value})"
+            )
+            return RetryEligibility.block(
+                RetryBlockReason.REVERSAL_OF_UNSYNCED,
+                detail=(
+                    f"Original adjustment {original_label} is not synced; "
+                    "pushing the reversal alone would drift Zoho. "
+                    "Retry blocked."
+                ),
+            )
+
+    return RetryEligibility.ok()
 
 
 def _actor_label(actor: User | None) -> str:

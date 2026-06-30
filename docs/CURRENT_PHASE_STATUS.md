@@ -1,6 +1,50 @@
 # Current Phase Status
 
-## v2.16.2 — Item detail editor: input affordance polish (feature branch, NOT yet deployed)
+## v2.16.3 — Inventory adjustment retry-safety gate (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/adjustment-retry-safety-v2.16.3` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). **No schema change** — uses existing `voided_at` + `reversal_of_adjustment_id` fields. |
+| **Status** | Code complete; tests green (528 passed; +23 new + 1 v2.10.0 contract tightened); prod-data simulation confirms all 14 prod rows correctly route to BLOCKED states; **not merged, not deployed, not tagged**. |
+| **Safety hardening** | No business-logic change beyond retry eligibility. No ledger row deleted or edited. No new Zoho/OAuth import. No Receiving file touched. Patch bump because `/healthz` should clearly identify the guarded version. |
+
+**Why this release** — during v2.10.0 smoke testing on 2026-06-29 a manual adjustment (ADJ-2026-0003, +1) failed Zoho sync because the service rejected the description. Operator compensated it locally with ADJ-2026-0006 (−1, `reversal_of_adjustment_id=3`). Service-side sanitization was later fixed in zoho-integration-service, but this opened a subtle UI hazard: if an operator now retries the historical failed row, PackTrack would push the original movement to Zoho without changing PackTrack stock (the FAILED sync never rolled back local state). Net result: PT↔Zoho drift. v2.16.3 closes the door at the eligibility gate.
+
+**v2.16.3 rules** — single source of truth in `services/inventory_adjustment_sync.retry_eligibility()`. Read-only. Used identically by the route gate and the history-template Retry button so the UI can never offer what the server would refuse. First match wins:
+
+1. **`ALREADY_SYNCED`** — `zoho_sync_status == SYNCED`. Already pushed.
+2. **`VOIDED`** — `voided_at IS NOT NULL`. Administratively voided.
+3. **`REVERSED_LOCALLY`** — some other adjustment exists with `reversal_of_adjustment_id == self.id`. PackTrack has already compensated this row's stock delta locally; pushing it to Zoho alone would drift.
+4. **`REVERSAL_OF_UNSYNCED`** — this row IS a reversal (`reversal_of_adjustment_id` set) AND the original it cancels is not SYNCED. Pushing the reversal-half alone would drift Zoho in the opposite direction. Pair is incoherent until the original is reconciled.
+
+All other rows (FAILED/PENDING/NOT_CONFIGURED/SKIPPED with no void, no child reversal, no unsynced-parent) remain retryable — the operator can still recover the genuine failures.
+
+**Route gate** — `POST /inventory/adjustments/{id}/sync` calls `retry_eligibility` before `try_sync_adjustment`. If blocked, raises `HTTPException(409, detail=elig.detail)` → custom handler returns `{"error": <copy>}` JSON or the existing error template on HTML accept. Role gate (`require_owner` → 403) still runs first.
+
+**UI gate** — `inventory_adjustments/history.html` reads the per-row `retry_eligibility` map injected by both history GET routes. Eligible rows: existing Retry button. Blocked non-SYNCED rows: render `<span data-testid="adjustment-retry-blocked-{id}" data-retry-block-reason="<code>">{operator-copy}</span>`. SYNCED rows: status tag already says `synced`, so the blocked label is suppressed.
+
+**Tests (+23 cases in `tests/test_v2_16_3_retry_safety.py`)** — 9 service-level rules (each eligibility case), 6 route-level (every block reason returns 409 with the right copy; one happy-path proves normal FAILED rows still retry; one proves the role gate still wins over the eligibility gate); 4 template-level (button shown/hidden, blocked label, SYNCED no double-label, full smoke-pair render); 1 import-surface defense (no direct Zoho/OAuth import); 1 explicit read-only invariant (eligibility check never mutates stock or row fields). Plus one existing v2.10.0 contract test (`test_retry_on_synced_row_is_no_op` → `…_refused_and_no_op`) tightened to assert the 409 rather than the silent redirect.
+
+**Prod-data simulation** — ran the rule logic as a SQL `CASE` against the live `inventory_adjustments` table on LXC 200 before merging. All 14 rows correctly route to a BLOCKED state under v2.16.3:
+
+| id | status | reverses | reversed_by | v2.16.3 decision |
+|---|---|---|---|---|
+| 1 | NOT_CONFIGURED | — | 2 | `BLOCKED: reversed_locally` |
+| 2 | NOT_CONFIGURED | 1 | — | `BLOCKED: reversal_of_unsynced` |
+| **3** | **FAILED** | — | **6** | **`BLOCKED: reversed_locally`** ← original smoke case |
+| 4 | SYNCED | — | 5 | `BLOCKED: already_synced` |
+| 5 | SYNCED | 4 | — | `BLOCKED: already_synced` |
+| **6** | **NOT_CONFIGURED** | **3** | — | **`BLOCKED: reversal_of_unsynced`** ← compensation row |
+| 7-14 | SYNCED / SYNCED reversals | — | — | `BLOCKED: already_synced` |
+
+No prod row is silently retryable in a way that risks drift. No data UPDATE required.
+
+**Hard contract preserved.** No schema change. No ledger row deleted or edited (the patch only adds a read-only gate and template wiring). No PackTrack→Zoho direct call. `zoho_adjustment_client.py` untouched. No Receiving file touched. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0/v2.16.1/v2.16.2 contracts intact. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.16.2 — Item detail editor: input affordance polish (deployed + tagged via merge into main)
 
 | | |
 |---|---|
