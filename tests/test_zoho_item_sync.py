@@ -88,7 +88,9 @@ def test_patch_called_with_correct_url_headers_payload(session, monkeypatch):
                            "description": "New Desc", "unit": "boxes"}},
         )
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(
+        session, it, payload=zis.scalar_payload(it), client=_client(handler)
+    )
 
     assert result.status == "synced"
     assert captured["method"] == "PATCH"
@@ -113,7 +115,7 @@ def test_vendor_never_in_payload(session, monkeypatch):
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"item": {"name": it.name}})
 
-    zis.push_item_update(session, it, client=_client(handler))
+    zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert "vendor" not in captured["body"]
     assert "SecretVendor" not in json.dumps(captured["body"])
 
@@ -131,7 +133,7 @@ def test_success_marks_synced_and_clears_error(session, monkeypatch):
                                                   "description": it.description,
                                                   "unit": it.unit}})
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "synced"
     session.refresh(it)
     assert it.zoho_push_status == "synced"
@@ -148,7 +150,7 @@ def test_read_after_write_aligns_from_normalized_response(session, monkeypatch):
         return httpx.Response(200, json={"item": {"name": "Normalized Name",
                                                   "description": "d", "unit": "ea"}})
 
-    zis.push_item_update(session, it, client=_client(handler))
+    zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     session.refresh(it)
     assert it.name == "Normalized Name"
     assert it.unit == "ea"
@@ -167,7 +169,7 @@ def test_read_after_write_falls_back_to_get(session, monkeypatch):
         return httpx.Response(200, json={"item": {"name": "Keep Name",
                                                   "description": "x", "unit": "units"}})
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "synced"
     assert calls == ["PATCH", "GET"]
 
@@ -193,7 +195,7 @@ def test_service_error_marks_failed_keeps_edit(session, monkeypatch, status_code
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, json=body)
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "failed"
     session.refresh(it)
     assert it.zoho_push_status == "failed"
@@ -209,7 +211,7 @@ def test_network_error_marks_failed(session, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "failed"
     session.refresh(it)
     assert it.zoho_push_status == "failed"
@@ -230,7 +232,7 @@ def test_unconfigured_service_parks_pending_without_call(session, monkeypatch):
         called["n"] += 1
         return httpx.Response(200, json={})
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "pending"
     assert called["n"] == 0
     session.refresh(it)
@@ -248,7 +250,7 @@ def test_missing_zoho_item_id_does_not_call_service(session, monkeypatch):
         called["n"] += 1
         return httpx.Response(200, json={})
 
-    result = zis.push_item_update(session, it, client=_client(handler))
+    result = zis.push_item_update(session, it, payload=zis.scalar_payload(it), client=_client(handler))
     assert result.status == "pending"
     assert called["n"] == 0
     session.refresh(it)
@@ -263,11 +265,11 @@ def test_configured_when_all_three_settings_present(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# cf_product_line custom-field write (v2.7.0)
+# Combined master-data payload (v2.8.0): client sends exactly what it's given
 # ---------------------------------------------------------------------------
 
 
-def test_cf_product_line_included_in_payload_and_synced(session, monkeypatch):
+def test_combined_payload_sent_verbatim_and_synced(session, monkeypatch):
     _configure(monkeypatch)
     it = _item(session, name="Keep", description="Keep", unit="ea")
     captured = {}
@@ -277,46 +279,49 @@ def test_cf_product_line_included_in_payload_and_synced(session, monkeypatch):
         return httpx.Response(200, json={"item": {"name": "Keep",
                                                   "description": "Keep", "unit": "ea"}})
 
-    result = zis.push_item_update(
-        session, it, cf_product_line="MIT A", client=_client(handler)
-    )
+    payload = {
+        "brand": "Haute", "category_id": "cat-1",
+        "custom_fields": {"cf_package_type": "Box", "cf_product_line": "MIT A"},
+    }
+    result = zis.push_item_update(session, it, payload=payload, client=_client(handler))
     assert result.status == "synced"
-    # Scalar allowlist plus exactly one custom field, by api_name + option name.
-    assert captured["body"]["custom_fields"] == {"cf_product_line": "MIT A"}
-    assert set(captured["body"].keys()) == {"name", "description", "unit", "custom_fields"}
-    # No raw customfield id, no other custom field, no vendor.
+    assert captured["body"] == payload
     blob = json.dumps(captured["body"])
     assert "customfield_id" not in blob
     assert "vendor" not in blob
 
 
-def test_cf_product_line_empty_string_clears(session, monkeypatch):
+def test_custom_field_empty_string_clears(session, monkeypatch):
     _configure(monkeypatch)
     it = _item(session)
+    captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"item": {"name": it.name}})
 
-    captured = {}
-    zis.push_item_update(session, it, cf_product_line="", client=_client(handler))
+    zis.push_item_update(
+        session, it, payload={"custom_fields": {"cf_product_line": ""}},
+        client=_client(handler),
+    )
     assert captured["body"]["custom_fields"] == {"cf_product_line": ""}
 
 
-def test_cf_product_line_not_sent_when_none(session, monkeypatch):
+def test_empty_payload_is_noop_synced_without_call(session, monkeypatch):
     _configure(monkeypatch)
     it = _item(session)
+    called = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"item": {"name": it.name}})
+        called["n"] += 1
+        return httpx.Response(200, json={})
 
-    captured = {}
-    zis.push_item_update(session, it, client=_client(handler))  # cf_product_line=None
-    assert "custom_fields" not in captured["body"]
+    result = zis.push_item_update(session, it, payload={}, client=_client(handler))
+    assert result.status == "synced"
+    assert called["n"] == 0
 
 
-def test_cf_product_line_failure_marks_failed_keeps_local(session, monkeypatch):
+def test_custom_field_failure_marks_failed_keeps_local(session, monkeypatch):
     _configure(monkeypatch)
     it = _item(session, name="Edited Name")
 
@@ -325,7 +330,8 @@ def test_cf_product_line_failure_marks_failed_keeps_local(session, monkeypatch):
                                          "detail": "nope"})
 
     result = zis.push_item_update(
-        session, it, cf_product_line="MIT A", client=_client(handler)
+        session, it, payload={"custom_fields": {"cf_product_line": "MIT A"}},
+        client=_client(handler),
     )
     assert result.status == "failed"
     session.refresh(it)
@@ -334,16 +340,11 @@ def test_cf_product_line_failure_marks_failed_keeps_local(session, monkeypatch):
     assert it.name == "Edited Name"  # local scalar edit not rolled back
 
 
-def test_outbound_payload_cf_only_added_when_provided():
+def test_scalar_payload_is_local_trio():
     it = Item(name="X", unit="ea", description="d")
-    assert "custom_fields" not in zis._outbound_payload(it)
-    assert zis._outbound_payload(it, cf_product_line="MIT B")["custom_fields"] == {
-        "cf_product_line": "MIT B"
-    }
-    # Empty string is a real (clearing) value, not "omit".
-    assert zis._outbound_payload(it, cf_product_line="")["custom_fields"] == {
-        "cf_product_line": ""
-    }
+    assert zis.scalar_payload(it) == {"name": "X", "description": "d", "unit": "ea"}
+    it2 = Item(name="Y", unit="ea", description=None)
+    assert zis.scalar_payload(it2)["description"] == ""  # None → "" (clearable)
 
 
 # ---------------------------------------------------------------------------

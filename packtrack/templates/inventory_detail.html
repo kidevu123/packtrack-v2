@@ -9,6 +9,42 @@
 {% macro mval(v) %}{% if v not in (none, '') %}{{ v }}{% else %}<span class="text-stone-400">Not set</span>{% endif %}{% endmacro %}
 {% macro mmoney(v) %}{% if v is not none %}{{ v|money('USD') }}{% else %}<span class="text-stone-400">Not set</span>{% endif %}{% endmacro %}
 
+{# ── Metadata-driven editable field (v2.8.0) ──────────────────────────── #}
+{% macro field_input(f) %}
+  {% set base = "mt-1 w-full rounded-lg text-sm focus:border-stone-500 focus:ring-0 " %}
+  {% set cls = (base ~ "border-stone-300") if f.editable else (base ~ "border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed") %}
+  {% if f.kind == 'textarea' %}
+    <textarea name="{{ f.key }}" rows="3" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">{{ f.value }}</textarea>
+  {% elif f.kind == 'number' %}
+    <input type="text" inputmode="decimal" name="{{ f.key }}" value="{{ f.value }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }} tabular-nums" />
+  {% elif f.kind == 'select' %}
+    <select name="{{ f.key }}" aria-label="{{ f.label }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
+      {% if f.clearable %}<option value="" {% if not f.value %}selected{% endif %}>— Not set —</option>{% endif %}
+      {% if f.value and not f.value_in_options %}<option value="{{ f.value }}" selected>{{ f.value }} (current — not a Zoho option)</option>{% endif %}
+      {% for opt in f.options %}<option value="{{ opt }}" {% if opt == f.value %}selected{% endif %}>{{ opt }}</option>{% endfor %}
+    </select>
+  {% elif f.kind == 'category' %}
+    <select name="{{ f.key }}" aria-label="{{ f.label }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
+      {% if f.value and not f.value_in_options %}<option value="{{ f.value }}" selected>Current category (unlisted)</option>{% endif %}
+      {% for c in f.category_options %}<option value="{{ c.category_id }}" {% if (c.category_id|string) == f.value %}selected{% endif %}>{{ '— ' * (c.depth or 0) }}{{ c.name }}</option>{% endfor %}
+    </select>
+  {% else %}
+    <input type="text" name="{{ f.key }}" value="{{ f.value }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}" />
+  {% endif %}
+  {% if f.editable %}<input type="hidden" name="{{ f.key }}__orig" value="{{ f.original }}" />{% endif %}
+{% endmacro %}
+
+{% macro field_block(f) %}
+  <label class="block {{ 'sm:col-span-2' if f.kind == 'textarea' or f.key == 'cf_description' else '' }}">
+    <span class="text-xs text-stone-500">{{ f.label }}{% if f.help %} <span class="text-stone-400">· {{ f.help }}</span>{% endif %}</span>
+    {{ field_input(f) }}
+    {% if f.value and not f.value_in_options %}
+      <span class="mt-1 inline-block">{{ ui.status_badge("current value not in Zoho options", tone="warn", size="sm") }}</span>
+    {% endif %}
+    {% if f.error %}<span class="mt-1 block text-[11px] text-red-600">{{ f.error }}</span>{% endif %}
+  </label>
+{% endmacro %}
+
 {# Stock tone — mirrors the row partial so badges read consistently. #}
 {% set stock_tone = "ok" %}
 {% set stock_label = "Healthy" %}
@@ -33,6 +69,11 @@
   {{ ui.insight_card(title="Changes saved.", tone="info") }}
 {% elif saved == 'synced' %}
   {{ ui.insight_card(title="Saved and synced to Zoho.", tone="info") }}
+{% elif saved == 'invalid' %}
+  {{ ui.insight_card(
+       title="Nothing saved to Zoho — please fix the highlighted fields",
+       body="Your entries are kept below so you can correct them. The Zoho write is all-or-nothing, so no fields were changed.",
+       tone="danger") }}
 {% elif saved == 'failed' %}
   {{ ui.insight_card(
        title="Saved locally · Zoho sync failed",
@@ -41,17 +82,7 @@
 {% elif saved == 'local' %}
   {{ ui.insight_card(
        title="Saved locally · Zoho sync pending",
-       body="The Zoho-owned fields (name, description, unit) were saved in PackTrack. They are parked as pending until the item has a Zoho id / the integration service is configured, and are protected from being overwritten by the next inbound sync.",
-       tone="warn") }}
-{% elif saved == 'cf_invalid' %}
-  {{ ui.insight_card(
-       title="Zoho Product Line not saved",
-       body="The selected option isn’t a valid Zoho Product Line value, so it wasn’t sent. Other changes (if any) were saved. Pick one of the listed Zoho options and try again.",
-       tone="danger") }}
-{% elif saved == 'cf_unavailable' %}
-  {{ ui.insight_card(
-       title="Zoho Product Line not saved",
-       body="Zoho options couldn’t be loaded to validate your choice, so the Product Line change wasn’t sent. Other changes (if any) were saved. Try again once Zoho metadata is available.",
+       body="The Zoho-owned fields were saved in PackTrack. They are parked as pending until the item has a Zoho id / the integration service is configured, and are protected from being overwritten by the next inbound sync.",
        tone="warn") }}
 {% endif %}
 
@@ -78,263 +109,165 @@
 
   {# ── Main column ──────────────────────────────────────────────────── #}
   <div class="lg:col-span-8 space-y-4">
-    {% if can_edit %}
-      <form method="post" action="/inventory/{{ it.id }}"
-            class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5 space-y-4">
-        <h2 class="text-sm font-medium text-stone-700">Edit item</h2>
 
-        <label class="block">
-          <span class="text-xs text-stone-500">Name</span>
-          <input name="name" value="{{ it.name }}" maxlength="240" required
-                 class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
-        </label>
+    {% if it.zoho_item_id and extended and extended.warnings %}
+      <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
+        <span class="font-medium">Operator note:</span>
+        {{ extended.warnings | join(' · ') }}
+      </div>
+    {% endif %}
 
-        <label class="block">
-          <span class="text-xs text-stone-500">Description</span>
-          <textarea name="description" rows="3"
-                    class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0">{{ it.description or '' }}</textarea>
-        </label>
+    {% if can_edit %}<form method="post" action="/inventory/{{ it.id }}" class="space-y-4">{% endif %}
 
+      {# ── Primary details (Zoho master data) ──────────────────────────── #}
+      <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-medium text-stone-700">Primary details {% if it.zoho_item_id %}<span class="text-stone-400 font-normal">· Zoho</span>{% endif %}</h2>
+          {% if not can_edit %}{{ ui.status_badge("Read-only", tone="muted", size="sm") }}{% endif %}
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {% for f in editor.primary %}{{ field_block(f) }}{% endfor %}
+        </div>
+        <div class="sm:col-span-2">
+          <dt class="text-stone-500 text-xs">Browsing group <span class="text-stone-400">(PackTrack-derived, not Zoho)</span></dt>
+          <dd class="text-sm text-stone-700">{{ mval(it.product_line) }}</dd>
+        </div>
+      </section>
+
+      {# ── Operational (PackTrack-owned, local) ────────────────────────── #}
+      <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5 space-y-3">
+        <h2 class="text-sm font-medium text-stone-700">Operational <span class="text-stone-400 font-normal">· PackTrack</span></h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label class="block">
             <span class="text-xs text-stone-500">Material code <span class="text-stone-400">(optional)</span></span>
-            <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm font-mono focus:border-stone-500 focus:ring-0" />
-            <span class="mt-1 block text-[11px] text-stone-400">PackTrack-owned internal code for future Luma/BOM/consumption. Zoho item ID is the sync key.</span>
+            <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm font-mono focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <span class="mt-1 block text-[11px] text-stone-400">PackTrack-owned internal code. Never sent to Zoho.</span>
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Vendor</span>
             {% if it.zoho_item_id %}
               <input value="{{ it.vendor or '—' }}" disabled
                      class="mt-1 w-full rounded-lg border-stone-200 bg-stone-50 text-sm text-stone-500 cursor-not-allowed" />
-              <span class="mt-1 block text-[11px] text-stone-400">Vendor comes from Zoho and is not editable here yet.</span>
+              <span class="mt-1 block text-[11px] text-stone-400">Vendor comes from Zoho and is read-only here.</span>
             {% else %}
-              <input name="vendor" value="{{ it.vendor or '' }}" maxlength="200"
-                     class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
+              <input name="vendor" value="{{ it.vendor or '' }}" maxlength="200" {{ '' if can_edit else 'disabled' }}
+                     class="mt-1 w-full rounded-lg text-sm focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
               <span class="mt-1 block text-[11px] text-stone-400">Local-only item · vendor saved in PackTrack.</span>
             {% endif %}
           </label>
           <label class="block">
-            <span class="text-xs text-stone-500">Unit</span>
-            <input name="unit" value="{{ it.unit }}" maxlength="40"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0" />
-          </label>
-          <label class="block">
             <span class="text-xs text-stone-500">Daily usage rate</span>
-            <input name="daily_usage_rate" type="number" step="0.01" min="0" value="{{ it.daily_usage_rate }}"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+            <input name="daily_usage_rate" type="number" step="0.01" min="0" value="{{ it.daily_usage_rate }}" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Reorder point</span>
-            <input name="reorder_point" type="number" step="1" min="0" value="{{ it.reorder_point|int }}"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+            <input name="reorder_point" type="number" step="1" min="0" value="{{ it.reorder_point|int }}" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Critical point</span>
-            <input name="critical_point" type="number" step="1" min="0" value="{{ it.critical_point|int }}"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+            <input name="critical_point" type="number" step="1" min="0" value="{{ it.critical_point|int }}" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Sea lead days</span>
-            <input name="sea_lead_days" type="number" step="1" min="0" value="{{ it.sea_lead_days }}"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+            <input name="sea_lead_days" type="number" step="1" min="0" value="{{ it.sea_lead_days }}" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Express lead days</span>
-            <input name="express_lead_days" type="number" step="1" min="0" value="{{ it.express_lead_days }}"
-                   class="mt-1 w-full rounded-lg border-stone-300 text-sm tabular-nums focus:border-stone-500 focus:ring-0" />
+            <input name="express_lead_days" type="number" step="1" min="0" value="{{ it.express_lead_days }}" {{ '' if can_edit else 'disabled' }}
+                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
           </label>
         </div>
+      </section>
 
-        {# ── Zoho Product Line (cf_product_line) — the only editable Zoho custom field (v2.7.0) ── #}
-        {% if it.zoho_item_id and extended and extended.available %}
-          {% set pl_row = extended.custom_fields | selectattr('api_name', 'equalto', 'cf_product_line') | list | first %}
-          <div class="pt-3 border-t border-stone-100">
-            <span class="text-xs text-stone-500">Zoho Product Line
-              <span class="text-stone-400">(Zoho custom field — not the PackTrack browsing group)</span>
-            </span>
-            {% if pl_row and pl_row.is_dropdown and pl_row.options and extended.metadata_available %}
-              <input type="hidden" name="cf_product_line_original" value="{{ pl_row.value if pl_row.is_set else '' }}" />
-              <select name="cf_product_line" aria-label="Zoho Product Line"
-                      class="mt-1 w-full rounded-lg border-stone-300 text-sm focus:border-stone-500 focus:ring-0">
-                <option value="" {% if not pl_row.is_set %}selected{% endif %}>— Not set —</option>
-                {% if pl_row.value and not pl_row.value_in_options %}
-                  <option value="{{ pl_row.value }}" selected>{{ pl_row.value }} (current — not a Zoho option)</option>
-                {% endif %}
-                {% for opt in pl_row.options %}
-                  <option value="{{ opt }}" {% if pl_row.is_set and opt == pl_row.value %}selected{% endif %}>{{ opt }}</option>
-                {% endfor %}
-              </select>
-              {% if pl_row.value and not pl_row.value_in_options %}
-                <span class="mt-1 inline-block">{{ ui.status_badge("current value not in Zoho options", tone="warn", size="sm") }}</span>
-              {% endif %}
-              <span class="mt-1 block text-[11px] text-stone-400">Saves to Zoho via the integration service. Choose “— Not set —” to clear it.</span>
-            {% else %}
-              {# Metadata/options unavailable → read-only current value + soft warning, never an editable dropdown. #}
-              <div class="mt-1 text-sm text-stone-700">{{ mval(pl_row.value if pl_row else none) }}</div>
-              <span class="mt-1 block text-[11px] text-amber-700">Zoho options are unavailable right now, so this field can’t be edited. Showing the current value.</span>
-            {% endif %}
+      {# ── Packaging / custom fields (Zoho) ────────────────────────────── #}
+      {% if it.zoho_item_id %}
+        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-medium text-stone-700">Packaging &amp; custom fields <span class="text-stone-400 font-normal">· Zoho</span></h2>
+            {% if not can_edit %}{{ ui.status_badge("Read-only", tone="muted", size="sm") }}{% endif %}
           </div>
-        {% endif %}
+          {% if extended and extended.available and not extended.metadata_available %}
+            <p class="text-[11px] text-amber-700">Zoho field metadata is unavailable, so custom fields are read-only right now.</p>
+          {% endif %}
+          {% if editor.custom %}
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {% for f in editor.custom %}{{ field_block(f) }}{% endfor %}
+            </div>
+          {% else %}
+            <p class="text-sm text-stone-400">No custom fields available.</p>
+          {% endif %}
+        </section>
+      {% endif %}
 
-        <div class="flex items-center justify-between gap-3 pt-2 border-t border-stone-100">
+      {% if can_edit %}
+        <div class="flex items-center justify-between gap-3 bg-white border border-stone-200 rounded-2xl shadow-sm px-5 py-3 sticky bottom-3">
           <p class="text-[11px] text-stone-400">
-            On-hand stock syncs from Zoho / receipts and isn't editable here.
-            Editing name, description, or unit pushes to Zoho via the integration
-            service. Vendor is read-only for Zoho-synced items.
+            Editable Zoho fields save to Zoho via the integration service (one combined update). Stock, pricing,
+            accounts, vendor, SKU, tags and status are read-only.
           </p>
           <button type="submit" class="shrink-0 rounded-lg bg-stone-900 text-white px-4 py-2 text-sm font-medium hover:bg-stone-800 transition-colors">
             Save changes
           </button>
         </div>
-      </form>
-    {% else %}
-      {# Read-only detail for non-owner roles. #}
-      <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
-        <h2 class="text-sm font-medium text-stone-700 mb-3">Details</h2>
-        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-          <div><dt class="text-stone-500 text-xs">Material code</dt><dd class="font-mono">{{ it.material_code or '—' }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Vendor</dt><dd>{{ it.vendor or '—' }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Unit</dt><dd>{{ it.unit }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Daily usage</dt><dd class="tabular-nums">{{ it.daily_usage_rate|qty }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Reorder point</dt><dd class="tabular-nums">{{ it.reorder_point|qty }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Critical point</dt><dd class="tabular-nums">{{ it.critical_point|qty }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Sea lead days</dt><dd class="tabular-nums">{{ it.sea_lead_days }}</dd></div>
-          <div><dt class="text-stone-500 text-xs">Express lead days</dt><dd class="tabular-nums">{{ it.express_lead_days }}</dd></div>
-          <div class="sm:col-span-2"><dt class="text-stone-500 text-xs">Description</dt><dd class="text-stone-700 whitespace-pre-line">{{ it.description or '—' }}</dd></div>
-        </dl>
-      </section>
-    {% endif %}
-
-    {# ── Extended Zoho detail (v2.6.0, read-only) ───────────────────────── #}
-    {% if it.zoho_item_id %}
-      {% if extended and extended.warnings %}
-        <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
-          <span class="font-medium">Operator note:</span>
-          {{ extended.warnings | join(' · ') }}
-        </div>
       {% endif %}
 
-      {% if extended and extended.available %}
-        {% set zi = extended.item %}
-        {% set cat_name = (zi.category.category_name or zi.category.name) if zi.category else none %}
+    {% if can_edit %}</form>{% endif %}
 
-        {# Primary Details #}
-        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
-          <h2 class="text-sm font-medium text-stone-700 mb-3">Primary details <span class="text-stone-400 font-normal">· from Zoho</span></h2>
-          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div><dt class="text-stone-500 text-xs">Item name</dt><dd>{{ mval(zi.name) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Zoho item ID</dt><dd class="font-mono text-xs">{{ mval(zi.item_id) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">SKU</dt><dd class="font-mono">{{ mval(zi.sku) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Unit</dt><dd>{{ mval(zi.unit) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Category</dt><dd>{{ mval(cat_name) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Brand</dt><dd>{{ mval(zi.brand) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Manufacturer</dt><dd>{{ mval(zi.manufacturer) }}</dd></div>
-            <div>
-              <dt class="text-stone-500 text-xs">Preferred vendor <span class="text-stone-400">(read-only)</span></dt>
-              <dd>{{ mval(zi.preferred_vendor or zi.vendor) }}</dd>
-            </div>
-            <div class="sm:col-span-2">
-              <dt class="text-stone-500 text-xs">Standard description <span class="text-stone-400">(Zoho item description)</span></dt>
-              <dd class="text-stone-700 whitespace-pre-line">{{ mval(zi.description) }}</dd>
-            </div>
-            <div class="sm:col-span-2">
-              <dt class="text-stone-500 text-xs">Browsing group <span class="text-stone-400">(PackTrack-derived, not Zoho)</span></dt>
-              <dd>{{ mval(it.product_line) }}</dd>
-            </div>
-          </dl>
-        </section>
-
-        {# Packaging / Custom Fields #}
-        <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
-          <h2 class="text-sm font-medium text-stone-700 mb-1">Packaging &amp; custom fields <span class="text-stone-400 font-normal">· from Zoho</span></h2>
-          {% if can_edit %}
-            <p class="text-[11px] text-stone-400 mb-3">Read-only. Only “Zoho Product Line” is editable — see the edit form above.</p>
-          {% else %}
-            <p class="text-[11px] text-stone-400 mb-3">Read-only.</p>
-          {% endif %}
-          {# Owners edit cf_product_line in the form above, so hide it here to avoid a duplicate control. #}
-          {% set visible_cfs = extended.custom_fields | rejectattr('api_name', 'equalto', 'cf_product_line') | list if can_edit else extended.custom_fields %}
-          {% if visible_cfs %}
-            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              {% for row in visible_cfs %}
-                <div class="{{ 'sm:col-span-2' if row.api_name == 'cf_description' else '' }}">
-                  <dt class="text-stone-500 text-xs">
-                    {{ row.label }}
-                    {% if row.api_name == 'cf_product_line' %}<span class="text-stone-400">(Zoho Product Line)</span>{% endif %}
-                    {% if row.api_name == 'cf_description' %}<span class="text-stone-400">(custom field)</span>{% endif %}
-                  </dt>
-                  <dd class="mt-0.5">
-                    {% if row.is_dropdown %}
-                      <select disabled aria-label="{{ row.label }}"
-                              class="w-full rounded-lg border-stone-200 bg-stone-50 text-sm text-stone-600 cursor-not-allowed">
-                        {% if not row.is_set %}<option selected>— Not set —</option>{% endif %}
-                        {% if row.value and not row.value_in_options %}<option selected>{{ row.value }}</option>{% endif %}
-                        {% for opt in row.options %}
-                          <option {% if row.is_set and opt == row.value %}selected{% endif %}>{{ opt }}</option>
-                        {% endfor %}
-                      </select>
-                      {% if row.value and not row.value_in_options %}
-                        <span class="mt-1 inline-block">{{ ui.status_badge("value not in Zoho options", tone="warn", size="sm") }}</span>
-                      {% endif %}
+    {# ── Read-only Zoho accounting & inventory ───────────────────────────── #}
+    {% if it.zoho_item_id and extended and extended.available %}
+      {% set zi = extended.item %}
+      <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
+        <h2 class="text-sm font-medium text-stone-700 mb-1">Zoho accounting &amp; inventory</h2>
+        <p class="text-[11px] text-stone-400 mb-3">Read-only. Pricing, accounts, valuation, vendor and stock are owned by Zoho.</p>
+        <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div><dt class="text-stone-500 text-xs">SKU</dt><dd class="font-mono">{{ mval(zi.sku) }}</dd></div>
+          <div>
+            <dt class="text-stone-500 text-xs">Preferred vendor <span class="text-stone-400">(read-only)</span></dt>
+            <dd>{{ mval(zi.preferred_vendor or zi.vendor) }}</dd>
+          </div>
+          <div><dt class="text-stone-500 text-xs">Selling price</dt><dd class="tabular-nums">{{ mmoney(zi.selling_price) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Cost price</dt><dd class="tabular-nums">{{ mmoney(zi.cost_price) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Sales account</dt><dd>{{ mval(zi.sales_account.account_name if zi.sales_account else none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Purchase account</dt><dd>{{ mval(zi.purchase_account.account_name if zi.purchase_account else none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Inventory account</dt><dd>{{ mval(zi.inventory_account.account_name if zi.inventory_account else none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Valuation method</dt><dd>{{ mval(zi.valuation_method|upper if zi.valuation_method else none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">On hand (Zoho)</dt><dd class="tabular-nums">{{ zi.current_stock|qty if zi.current_stock is not none else mval(none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Available (Zoho)</dt><dd class="tabular-nums">{{ zi.available_stock|qty if zi.available_stock is not none else mval(none) }}</dd></div>
+          <div><dt class="text-stone-500 text-xs">Reorder point (Zoho)</dt><dd class="tabular-nums">{{ zi.reorder_point|qty if zi.reorder_point is not none else mval(none) }}</dd></div>
+          <div class="sm:col-span-2">
+            <dt class="text-stone-500 text-xs">Reporting tags</dt>
+            <dd>
+              {% if zi.reporting_tags %}
+                <div class="flex flex-wrap gap-1.5 mt-1">
+                  {% for tag in zi.reporting_tags %}
+                    {% if tag is mapping %}
+                      {{ ui.status_badge((tag.tag_name ~ ': ' ~ tag.tag_option_name) if tag.tag_option_name else tag.tag_name, tone="muted", size="sm") }}
                     {% else %}
-                      <span class="text-stone-700 whitespace-pre-line">{{ mval(row.value) }}</span>
+                      {{ ui.status_badge(tag, tone="muted", size="sm") }}
                     {% endif %}
-                  </dd>
+                  {% endfor %}
                 </div>
-              {% endfor %}
-            </dl>
-          {% else %}
-            <p class="text-sm text-stone-400">No custom fields available.</p>
-          {% endif %}
-        </section>
+              {% else %}
+                <span class="text-stone-400">None</span>
+              {% endif %}
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-        {# Zoho Accounting & Inventory #}
+      {% if zi.image and (zi.image.image_id or zi.image.image_name) %}
         <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
-          <h2 class="text-sm font-medium text-stone-700 mb-1">Zoho accounting &amp; inventory</h2>
-          <p class="text-[11px] text-stone-400 mb-3">Read-only. Pricing, accounts, valuation and stock are owned by Zoho.</p>
+          <h2 class="text-sm font-medium text-stone-700 mb-3">Images &amp; attachments <span class="text-stone-400 font-normal">· from Zoho</span></h2>
           <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div><dt class="text-stone-500 text-xs">Selling price</dt><dd class="tabular-nums">{{ mmoney(zi.selling_price) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Cost price</dt><dd class="tabular-nums">{{ mmoney(zi.cost_price) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Sales account</dt><dd>{{ mval(zi.sales_account.account_name if zi.sales_account else none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Purchase account</dt><dd>{{ mval(zi.purchase_account.account_name if zi.purchase_account else none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Inventory account</dt><dd>{{ mval(zi.inventory_account.account_name if zi.inventory_account else none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Valuation method</dt><dd>{{ mval(zi.valuation_method|upper if zi.valuation_method else none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">On hand (Zoho)</dt><dd class="tabular-nums">{{ zi.current_stock|qty if zi.current_stock is not none else mval(none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Available (Zoho)</dt><dd class="tabular-nums">{{ zi.available_stock|qty if zi.available_stock is not none else mval(none) }}</dd></div>
-            <div><dt class="text-stone-500 text-xs">Reorder point (Zoho)</dt><dd class="tabular-nums">{{ zi.reorder_point|qty if zi.reorder_point is not none else mval(none) }}</dd></div>
-            <div class="sm:col-span-2">
-              <dt class="text-stone-500 text-xs">Reporting tags</dt>
-              <dd>
-                {% if zi.reporting_tags %}
-                  <div class="flex flex-wrap gap-1.5 mt-1">
-                    {% for tag in zi.reporting_tags %}
-                      {% if tag is mapping %}
-                        {{ ui.status_badge((tag.tag_name ~ ': ' ~ tag.tag_option_name) if tag.tag_option_name else tag.tag_name, tone="muted", size="sm") }}
-                      {% else %}
-                        {{ ui.status_badge(tag, tone="muted", size="sm") }}
-                      {% endif %}
-                    {% endfor %}
-                  </div>
-                {% else %}
-                  <span class="text-stone-400">None</span>
-                {% endif %}
-              </dd>
-            </div>
+            <div><dt class="text-stone-500 text-xs">Image name</dt><dd class="truncate">{{ mval(zi.image.image_name) }}</dd></div>
+            <div><dt class="text-stone-500 text-xs">Type</dt><dd>{{ mval(zi.image.image_type) }}</dd></div>
           </dl>
         </section>
-
-        {# Images / Attachments #}
-        {% if zi.image and (zi.image.image_id or zi.image.image_name) %}
-          <section class="bg-white border border-stone-200 rounded-2xl shadow-sm p-5">
-            <h2 class="text-sm font-medium text-stone-700 mb-3">Images &amp; attachments <span class="text-stone-400 font-normal">· from Zoho</span></h2>
-            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              <div><dt class="text-stone-500 text-xs">Image name</dt><dd class="truncate">{{ mval(zi.image.image_name) }}</dd></div>
-              <div><dt class="text-stone-500 text-xs">Type</dt><dd>{{ mval(zi.image.image_type) }}</dd></div>
-            </dl>
-          </section>
-        {% endif %}
-
       {% endif %}
     {% endif %}
 
@@ -464,7 +397,7 @@
     </section>
 
     <section class="bg-white border border-stone-200 rounded-xl p-4">
-      <h2 class="text-sm font-medium text-stone-500 mb-3">Zoho</h2>
+      <h2 class="text-sm font-medium text-stone-500 mb-3">Sync status</h2>
       <dl class="space-y-2 text-sm">
         <div class="flex items-center justify-between gap-2">
           <dt class="text-stone-500">Item ID</dt>
@@ -485,7 +418,7 @@
         </div>
       </dl>
       {% if it.zoho_push_status == 'pending' %}
-        <p class="text-[11px] text-stone-400 mt-3 leading-relaxed">Local edits to Zoho-owned fields are held until the item has a Zoho id / the integration service is configured. They will not be overwritten by inbound sync in the meantime.</p>
+        <p class="text-[11px] text-stone-400 mt-3 leading-relaxed">Local edits to Zoho-owned scalars are held until the item has a Zoho id / the integration service is configured. They will not be overwritten by inbound sync in the meantime.</p>
       {% elif it.zoho_push_status == 'failed' and it.zoho_push_error %}
         <p class="text-[11px] text-red-500 mt-3 leading-relaxed">{{ it.zoho_push_error }}</p>
       {% endif %}
@@ -496,6 +429,7 @@
             Retry sync
           </button>
         </form>
+        <p class="text-[11px] text-stone-400 mt-2 leading-relaxed">Retry re-asserts name, description and unit. Brand, manufacturer, category and custom-field edits are re-applied by saving the form again.</p>
       {% endif %}
     </section>
   </aside>
