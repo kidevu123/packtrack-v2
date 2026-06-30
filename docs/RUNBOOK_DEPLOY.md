@@ -7,6 +7,74 @@
 > deploy that skipped the CSS build step — never repeat that pattern
 > without the verification recipe in § "Out-of-band deploys" below.
 
+## Safe deploy sequence (v2.16.1+)
+
+The deploy script ships with a **repo-state guard** that refuses
+deploys from a non-`main` branch, with a dirty working tree, or when
+local `main` differs from `origin/main`. This is a permanent defense
+against the v2.7.4 and v2.16.0 incidents where the deploy was
+accidentally run from a worktree on a feature branch.
+
+```bash
+cd /Users/sahilkhatri/Projects/Work/packtrack-v2
+git checkout main
+git pull --ff-only origin main
+PVE_HOST=192.168.1.190 LXC_ID=200 bash deploy/deploy.sh
+```
+
+The guard prints a one-screen banner before sending the bundle:
+
+```
+  ------------------------------------------------------------
+  PackTrack deploy
+  branch:  main
+  sha:     <12-char SHA>
+  version: <pyproject version>
+  alembic: <single head>
+  target:  PVE_HOST=192.168.1.190  LXC_ID=200
+  ------------------------------------------------------------
+```
+
+### Override (testing / recovery only — NOT routine prod)
+
+```bash
+ALLOW_NON_MAIN_DEPLOY=1 PVE_HOST=192.168.1.190 LXC_ID=200 bash deploy/deploy.sh
+```
+
+- Skips the branch + freshness checks
+- **Still refuses a dirty working tree** (untracked, staged, or unstaged changes)
+- Prints a loud warning + the branch / SHA it's about to ship
+
+Operators should never use the override for a normal production
+release. Use cases: rolling back to a tag via `git checkout v2.X.Y`
+then deploying; bringing up a fresh LXC from a feature branch during
+infra work.
+
+### Why the guard exists
+
+Two prior incidents:
+- **v2.7.4** — `gh pr create` heredoc with backticks accidentally
+  invoked `bash deploy/deploy.sh` from the feature-branch worktree.
+- **v2.16.0** — operator ran `deploy.sh` from a worktree that was on
+  the feature branch (post-merge, before checking out `main`).
+
+In both cases the deployed code was *correct* but the audit trail
+said "deployed from feature branch", which is not the same as
+"deployed from main at origin/main".
+
+### Branch / worktree hygiene
+
+After every release the operator should:
+
+1. Make sure the merged feature branch is deleted on origin (the PR's
+   `--delete-branch` flag handles this; `gh pr merge --delete-branch`).
+2. Delete the local feature branch (`git branch -D <name>`).
+3. Remove the local worktree (`git worktree remove ../<dirname>` then
+   `git worktree prune`).
+
+The main repo checkout at `/Users/sahilkhatri/Projects/Work/packtrack-v2`
+should always live on `main` between sessions.
+
 ## Canonical path: `bash deploy/deploy.sh`
 
 The official path is `bash deploy/deploy.sh` from the workstation. It:

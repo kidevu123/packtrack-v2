@@ -1,6 +1,44 @@
 # Current Phase Status
 
-## v2.16.0 — Cycle-count form completeness: Zoho snapshot + live Δ/After preview (feature branch, NOT yet deployed)
+## v2.16.1 — Deploy safety guard + branch/worktree cleanup (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/deploy-safety-guard-v2.16.1` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). No schema change. |
+| **Status** | Code complete; tests green (499 passed, unchanged); guard manual matrix 3/3 in-worktree (test 4 will pass on main after merge); **not merged, not deployed, not tagged**. |
+| **Tooling-only** | No business logic change. Patch bump because `/healthz` should clearly identify the guarded version. |
+
+**Why this release exists** — production deploys have twice been run from a worktree on a feature branch (v2.7.4 and v2.16.0 incidents). The deployed code was correct both times but the audit trail said "deployed from feature branch", which is not the same as "deployed from main at origin/main". v2.16.1 ships a permanent guard so the operator cannot accidentally repeat the mistake.
+
+**v2.16.1 scope**
+
+* **`deploy/deploy.sh::guard_repo_state()`** runs before `preflight_local` (i.e. before any bundle is built). Checks, in order:
+  1. cwd is inside a git repo
+  2. current branch is `main` (unless `ALLOW_NON_MAIN_DEPLOY=1`)
+  3. working tree is clean — staged, unstaged, AND untracked files (respecting `.gitignore`); enforced even with override
+  4. `git fetch --quiet origin main` succeeds (skipped under override)
+  5. local `main` == `origin/main` (skipped under override; rejects with `behind` / `ahead` / `diverged` language)
+* **Pre-deploy banner** prints `branch / sha (12-char) / version (pyproject) / alembic head / target host`. Operator sees exactly what's about to ship before any network call.
+* **Override** — `ALLOW_NON_MAIN_DEPLOY=1` skips checks 2 and 4-5 but **always** enforces 1 and 3. Prints a loud all-caps WARNING block to stderr with branch + sha + version so the operator can't miss what they bypassed.
+* **`.gitignore` adds `.claude/`** — per-session Claude Code state was being left untracked by convention; v2.16.1 makes it explicit so the dirty-tree check doesn't reject the deploy because of a session directory.
+* **Branch cleanup** — deleted 3 stale local feature branches whose origin counterparts were already gone (work shipped via tagged releases): `feature/inventory-masterdata-editor-v2.8.0` (→ v2.12.0), `feature/receiving-vnext-v2.7.4-polish` (→ v2.7.4), `feature/receiving-vnext-v2.7.5-mvp-reconciliation` (→ v2.7.5). Skipped: 3 historical feature branches still on origin; 2 backup branches.
+* **`docs/RUNBOOK_DEPLOY.md`** gains a "Safe deploy sequence (v2.16.1+)" section with the canonical 3-line command, the override syntax + caveat, the two prior incidents that motivated the guard, and a branch/worktree hygiene checklist.
+
+**Manual verification matrix** (`/tmp/run-guard-matrix.sh`) — exercises the guard without invoking the LXC deploy path:
+
+| # | Scenario | Expected | Result |
+|---|---|---|---|
+| 1 | feature branch, no override | branch-refusal error | ✓ PASS |
+| 2 | feature branch + `ALLOW_NON_MAIN_DEPLOY=1` + clean tree | loud warning, guard proceeds | ✓ PASS |
+| 3 | dirty tree + override | dirty-tree refusal (override doesn't bypass) | ✓ PASS |
+| 4 | main repo, clean, at origin/main | banner, guard proceeds | ⏳ blocks on main's `.claude/` until v2.16.1 ships the `.gitignore` line — guard is correctly enforcing, test will pass after merge |
+
+**Hard contract preserved.** No business-logic change. No schema change. No Receiving file touched. No service file touched. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0 contracts intact. All 499 prior tests still pass. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.16.0 — Cycle-count form completeness: Zoho snapshot + live Δ/After preview (deployed + tagged via merge into main)
 
 | | |
 |---|---|
