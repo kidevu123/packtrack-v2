@@ -9,6 +9,14 @@
      subtitle="Packaging POs pending warehouse receipt.",
 ) }}
 
+{# v2.13.0 — discoverable pointer to the operator runbook. The doc
+   lives in the repo at docs/RUNBOOK_RECEIVING_VNEXT_OPERATOR.md;
+   readable by owners on the host or via GitHub. #}
+<p class="text-[11px] text-stone-400 mb-4" data-testid="receiving-runbook-hint">
+  First time running Receiving vNext on a real shipment? See the operator runbook at
+  <code class="text-stone-500">docs/RUNBOOK_RECEIVING_VNEXT_OPERATOR.md</code>.
+</p>
+
 {% if not mirrors %}
   <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
     {{ ui.empty_state(
@@ -43,6 +51,25 @@
           {% endif %}
           {% if po %}
             {{ ui.status_badge("Linked to PT", tone="info", size="sm") }}
+          {% endif %}
+          {# v2.13.0 — launch-readiness diagnostic. Pure advisory; does
+             NOT gate the Start Receive button. Hidden on fully-received
+             cards (the "Fully received" badge already says everything). #}
+          {% if readiness_for and m.zoho_purchaseorder_id in readiness_for and not fully_received %}
+            {% set readiness = readiness_for[m.zoho_purchaseorder_id] %}
+            {% if readiness.is_ready %}
+              <span class="text-[10px] uppercase tracking-wider font-semibold text-emerald-700"
+                    data-testid="po-readiness-{{ m.zoho_purchaseorder_id }}"
+                    title="vNext launch checks passed">
+                ✓ Ready for vNext
+              </span>
+            {% else %}
+              <span class="text-[10px] uppercase tracking-wider font-semibold text-amber-700 cursor-help"
+                    data-testid="po-readiness-{{ m.zoho_purchaseorder_id }}"
+                    title="{{ readiness.issues | join(' · ') }}">
+                ⚠ Needs attention
+              </span>
+            {% endif %}
           {% endif %}
         </div>
         <div class="flex items-center gap-4 mt-1 text-sm text-stone-500 flex-wrap">

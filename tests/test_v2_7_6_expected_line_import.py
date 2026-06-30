@@ -348,8 +348,10 @@ def test_preview_renders_pasted_csv(session, engine, monkeypatch):
     assert "import-preview-table" in resp.text
     assert "Mailer 6x9" in resp.text
     assert "Sticker pack" in resp.text
-    # Ready count card
-    assert "Ready to import" in resp.text
+    # Ready count summary chip (v2.13.0 renamed "Ready to import" to
+    # just "Ready" as part of the per-status breakdown panel).
+    assert "import-preview-summary" in resp.text
+    assert "Ready" in resp.text
 
 
 def test_preview_renders_uploaded_csv(session, engine, monkeypatch):

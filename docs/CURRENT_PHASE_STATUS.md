@@ -1,6 +1,31 @@
 # Current Phase Status
 
-## v2.12.0 — Item master-data editor (resumed from stale v2.8.0 branch onto current main) (feature branch, NOT yet deployed)
+## v2.13.0 — Receiving launch readiness: CSV template + preview UX + PO diagnostic + operator runbook (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-launch-readiness-v2.13.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged from v2.11.0). No schema change. |
+| **Note on version** | The original spec said v2.7.7 but main has advanced through v2.9.0/v2.10.0/v2.11.0/v2.12.0; user confirmed v2.13.0 to keep the changelog monotonic. |
+| **Status** | Code complete; tests green (442 passed; +22 over v2.12.0's 420); **not merged, not deployed, not tagged**. |
+
+**v2.13.0 scope** — the last pre-real-shipment Receiving readiness batch. After this, **stop speculative receiving development** until a real shipment runs through the flow.
+
+* **CSV template download** — `GET /receive/v2/{id}/expected-lines/import/template.csv` (OWNER + RECEIVING, flag-gated). Returns a CSV with the canonical headers (`material_code,item,quantity,unit,vendor_case_number,note`) pre-populated with one row per distinct PO item. Filename `R-YYYY-NNNN-packing-list-template.csv`. Surfaced as a `↓ Download CSV template` link inside the existing import disclosure on the receive page. Operator opens it in Excel/Numbers/Sheets, fills quantities, Save As CSV.
+* **Improved XLSX rejection message** — the import-upload route now returns a v2.13.0-targeted error when an `.xlsx`/`.xls`/`.xlsm`/`.xlsb` file is uploaded: "XLSX is not supported yet. In Excel / Numbers / Google Sheets, use File → Save As → CSV (UTF-8) and upload that file." No new dependency added — the runtime carries no XLSX library and pyproject was not modified.
+* **Import preview UX** — preview page now shows a 6-card summary (Ready / Unmatched / Ambiguous / Invalid qty / Invalid / Total parsed) and per-row suggestion lists for UNMATCHED/AMBIGUOUS rows. Suggestions come from a deterministic substring/exact-match scorer over the PO items (no fuzzy library). Commit semantics unchanged: only `READY` rows are imported.
+* **PO launch-readiness diagnostic** — `services/receiving_launch_readiness.assess_po_readiness()` returns a `ReadinessReport(status, issues)` per Zoho mirror row. Surfaced on `/receive` cards as `✓ Ready for vNext` (emerald) or `⚠ Needs attention` (amber, with issue details in the `title` attribute). **Diagnostic only** — does not gate Start Receive. Checks: PO linked to a PT row, every item has `material_code`, mirror has line items, vendor known, not fully received.
+* **Operator runbook** — new `docs/RUNBOOK_RECEIVING_VNEXT_OPERATOR.md` walks through the end-to-end real-receive flow: how POs appear, starting a receive, attaching the packing list, manual + CSV import for expected lines (with the new template), case/line entry, reading review warnings, when (and when not) to finalize, what happens after finalize, what NOT to do, and a first-real-receive checklist. Discoverable from `/receive` via a one-line hint.
+
+**Tests (+22 cases, total 442)** in `tests/test_v2_13_0_launch_readiness.py`: template route auth + flag + headers + rows + filename + content-type + headers-only fallback for receives with no PO + link on receive page · preview summary chips + per-status counts helper + suggestion list for AMBIGUOUS rows + empty-suggestion list for truly-unknown UNMATCHED · readiness Ready vs Needs-attention via service + missing material code surfaced via the `/receive` page · XLSX upload returns the v2.13.0 message with "Save As" + "CSV" hints · runbook hint renders on `/receive` · commit semantics unchanged (only READY rows imported) · legacy `/receive/{zoho_po_id}` regression · source-level guard on the readiness service (no httpx / no Zoho / no OAuth).
+
+**Hard contract preserved.** No schema change. No Zoho payload change. No Luma payload change. No finalize semantics change. No PDF parsing. No OCR. No vendor portal. No new dependency added. Feature flag default unchanged. v2.8.0 WIP on `feature/inventory-masterdata-editor-v2.8.0` already merged into v2.12.0 — no further interaction. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+**Recommendation after this release.** Stop speculative receiving work. Wait for a real shipment, run it through the flow (using the template + preview + reconciliation), then fix only the real-world friction the operator surfaces. The runbook's "first-real-receive checklist" is the next concrete user action.
+
+---
+
+## v2.12.0 — Item master-data editor (resumed from stale v2.8.0 branch onto current main) (deployed + tagged via merge into main)
 
 | | |
 |---|---|

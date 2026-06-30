@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from sqlmodel import Session, select
@@ -77,6 +77,10 @@ class PreviewRow:
     note: str
     status: RowStatus
     detail: str = ""  # human-readable status detail
+    # v2.13.0 — UX hint: top PO-item candidates the operator can
+    # eyeball when the row is UNMATCHED / AMBIGUOUS. Tuples of
+    # ``(item_id, "name · material_code")``. Empty for READY rows.
+    suggestions: list[tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -91,6 +95,15 @@ class PreviewReport:
     @property
     def skipped_rows(self) -> list[PreviewRow]:
         return [r for r in self.rows if r.status is not RowStatus.READY]
+
+    # v2.13.0 — per-status counts surfaced as summary chips on the
+    # preview page so the operator sees the failure mix at a glance.
+    @property
+    def counts_by_status(self) -> dict[str, int]:
+        out: dict[str, int] = {s.value: 0 for s in RowStatus}
+        for r in self.rows:
+            out[r.status.value] += 1
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +313,15 @@ def build_preview(
             detail = outcome.detail
 
         item = outcome.item
+        # v2.13.0 — when the row couldn't match (or matched too many),
+        # surface the top candidates from the PO item list so the
+        # operator can fix the row without leaving the page.
+        sugg: list[tuple[int, str]] = []
+        if status in (RowStatus.UNMATCHED, RowStatus.AMBIGUOUS):
+            sugg = _suggest_candidates(
+                items, raw_material=raw_material,
+                raw_sku=raw_sku, raw_name=raw_name,
+            )
         out.append(PreviewRow(
             line_no=i,
             raw_item=raw_name or raw_sku or raw_material,
@@ -313,5 +335,57 @@ def build_preview(
             note=(note or "").strip()[:500],
             status=status,
             detail=detail,
+            suggestions=sugg,
         ))
     return PreviewReport(rows=out)
+
+
+def _suggest_candidates(
+    items: list[Item], *, raw_material: str, raw_sku: str, raw_name: str,
+    limit: int = 5,
+) -> list[tuple[int, str]]:
+    """Deterministic suggestion list — no fuzzy library.
+
+    Strategy: rank by simple containment overlap on whichever raw
+    field the operator provided. Tie-broken by item name. Returns up
+    to ``limit`` `(item_id, "name · material_code")` tuples.
+    """
+    seeds = [(raw_material or "").strip().lower(),
+             (raw_sku or "").strip().lower(),
+             (raw_name or "").strip().lower()]
+    seeds = [s for s in seeds if s]
+    if not seeds:
+        return []
+    scored: list[tuple[int, int, Item]] = []  # (score, name_tiebreaker, item)
+    for it in items:
+        haystack = " ".join(filter(None, [
+            (it.material_code or ""),
+            (it.sku_code or ""),
+            (it.name or ""),
+        ])).lower()
+        score = 0
+        for seed in seeds:
+            if seed and seed in haystack:
+                # Reward exact field match over substring presence.
+                if seed == (it.material_code or "").lower():
+                    score += 4
+                elif seed == (it.sku_code or "").lower():
+                    score += 3
+                elif seed == (it.name or "").lower():
+                    score += 2
+                else:
+                    score += 1
+        if score > 0:
+            scored.append((score, 0, it))
+    if not scored:
+        return []
+    scored.sort(
+        key=lambda t: (-t[0], (t[2].name or "").lower()),
+    )
+    out: list[tuple[int, str]] = []
+    for _score, _tb, it in scored[:limit]:
+        label_bits = [it.name or f"item {it.id}"]
+        if it.material_code:
+            label_bits.append(it.material_code)
+        out.append((it.id, " · ".join(label_bits)))
+    return out
