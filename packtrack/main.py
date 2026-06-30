@@ -35,6 +35,7 @@ from packtrack.routes import (
     inventory_adjustments,
     purchase_orders,
     receiving,
+    receiving_diagnostics,
     receiving_v2,
     search,
     telegram_webhook,
@@ -173,6 +174,10 @@ app.include_router(inventory_adjustments.router)
 # the static '/inventory/cycle-count' path wins over the dynamic
 # '/inventory/{item_id:int}' inventory-detail route.
 app.include_router(cycle_count.router)
+# Receiving PO visibility diagnostics (v2.15.0) — registered BEFORE
+# receiving.router so the static '/receive/find' path wins over
+# receiving.router's dynamic '/receive/{zoho_po_id}' route.
+app.include_router(receiving_diagnostics.router)
 app.include_router(receiving.router)
 # Receiving vNext (v2.5.0 Stage 1) — every route guarded by
 # settings.RECEIVING_VNEXT_ENABLED at the dependency layer, so when the
