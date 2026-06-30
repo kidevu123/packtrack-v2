@@ -47,6 +47,7 @@ from packtrack.models import (
     ZohoSyncStatus,
 )
 from packtrack.services.inventory_adjustment_sync import (
+    RetryBlockReason,
     RetryEligibility,
     retry_eligibility,
 )
@@ -105,6 +106,10 @@ class VarianceRow:
     snapshot_at: datetime | None
     snapshot_stale: bool
     status: VarianceStatus
+    # v2.17.1 — short operator-facing copy for "what should I do next?"
+    # rendered next to the row. Computed deterministically from status;
+    # never implies Zoho should overwrite PackTrack.
+    recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,10 @@ class StaleSnapshotRow:
     snapshot_at: datetime | None
     zoho_item_id: str | None
     status: StaleSnapshotStatus
+    # v2.17.1 — operator guidance. Differentiates "we have a zoho id but
+    # no snapshot yet (integration concern)" from "item is local-only
+    # and needs linking" so the recommended action is precise.
+    recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,11 @@ class SyncExceptionRow:
     zoho_sync_warning: str | None
     sync_attempt_count: int
     eligibility: RetryEligibility
+    # v2.17.1 — operator copy for "what should I do next?". Distinguishes
+    # eligibility-blocked rows (already compensated / drift risk / voided)
+    # from config-class statuses (not_configured / skipped) so the
+    # operator's first move is obvious.
+    recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -230,6 +244,62 @@ def _variance_status(variance: Decimal, stale: bool) -> VarianceStatus:
 
 
 # ---------------------------------------------------------------------------
+# v2.17.1 — operator-facing "what should I do?" copy
+# ---------------------------------------------------------------------------
+#
+# Pure functions. Deterministic from the row's state. Render-time only;
+# never imply Zoho should overwrite PackTrack. Tested independently of
+# the route layer so future copy tweaks don't need to re-test rendering.
+
+
+def recommended_variance_action(status: VarianceStatus) -> str:
+    if status is VarianceStatus.PACKTRACK_HIGHER:
+        return "Review recent adjustments / confirm Zoho sync"
+    if status is VarianceStatus.ZOHO_HIGHER:
+        return "Cycle count or review PackTrack movements"
+    if status is VarianceStatus.SNAPSHOT_STALE:
+        return "Wait for next sync or review Zoho sync health"
+    return ""  # IN_SYNC — nothing to do
+
+
+def recommended_stale_action(
+    status: StaleSnapshotStatus, zoho_item_id: str | None,
+) -> str:
+    if status is StaleSnapshotStatus.MISSING:
+        if zoho_item_id:
+            return "Await snapshot sync / check integration"
+        return "Link Zoho item or mark as local-only"
+    # STALE — snapshot exists but is old. Same guidance as a stale
+    # variance row: it's a sync-cadence issue, not an item issue.
+    return "Wait for next sync or review Zoho sync health"
+
+
+def recommended_exception_action(
+    status: ZohoSyncStatus, eligibility: RetryEligibility,
+) -> str:
+    # Eligibility-blocked rows: surface why no action is needed.
+    if not eligibility.allowed:
+        reason = eligibility.reason
+        if reason is RetryBlockReason.REVERSED_LOCALLY:
+            return "No action — already compensated locally"
+        if reason is RetryBlockReason.REVERSAL_OF_UNSYNCED:
+            return "No action — retry blocked to prevent drift"
+        if reason is RetryBlockReason.VOIDED:
+            return "No action — voided locally"
+        if reason is RetryBlockReason.ALREADY_SYNCED:
+            return "Already synced"
+        return eligibility.detail  # defensive fallback
+
+    # Eligible — distinguish config-class statuses from a clean retry so
+    # the operator's first move is precise.
+    if status is ZohoSyncStatus.NOT_CONFIGURED:
+        return "Check integration configuration"
+    if status is ZohoSyncStatus.SKIPPED:
+        return "Link item to Zoho before syncing"
+    return "Retry sync"
+
+
+# ---------------------------------------------------------------------------
 # Section builders
 # ---------------------------------------------------------------------------
 
@@ -261,13 +331,15 @@ def compute_variance_rows(
             # Aligned + fresh — nothing for the operator to act on here.
             # (Summary counts this row as IN_SYNC separately.)
             continue
+        status = _variance_status(variance, stale)
         rows.append(VarianceRow(
             item_id=it.id, name=it.name, sku_code=it.sku_code,
             material_code=it.material_code, product_line=it.product_line,
             packtrack_qty=pt, zoho_qty=zoho, variance=variance,
             snapshot_at=it.last_zoho_stock_snapshot_at,
             snapshot_stale=stale,
-            status=_variance_status(variance, stale),
+            status=status,
+            recommended_action=recommended_variance_action(status),
         ))
 
     rows.sort(
@@ -302,6 +374,7 @@ def compute_stale_snapshot_rows(
             packtrack_qty=_to_decimal(it.current_stock),
             snapshot_at=snap_at, zoho_item_id=it.zoho_item_id,
             status=status,
+            recommended_action=recommended_stale_action(status, it.zoho_item_id),
         ))
     rows.sort(key=lambda r: (
         0 if r.status is StaleSnapshotStatus.MISSING else 1,
@@ -344,6 +417,7 @@ def compute_sync_exception_rows(
             item = session.get(Item, adj.item_id)
             if item is not None:
                 item_cache[adj.item_id] = item
+        eligibility = retry_eligibility(session, adj)
         rows.append(SyncExceptionRow(
             adjustment_id=adj.id,
             adjustment_number=adj.adjustment_number,
@@ -358,7 +432,10 @@ def compute_sync_exception_rows(
             zoho_sync_error=adj.zoho_sync_error,
             zoho_sync_warning=adj.zoho_sync_warning,
             sync_attempt_count=adj.sync_attempt_count or 0,
-            eligibility=retry_eligibility(session, adj),
+            eligibility=eligibility,
+            recommended_action=recommended_exception_action(
+                adj.zoho_sync_status, eligibility,
+            ),
         ))
     return rows
 

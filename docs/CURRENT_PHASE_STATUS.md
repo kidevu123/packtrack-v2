@@ -1,6 +1,38 @@
 # Current Phase Status
 
-## v2.17.0 — Inventory reconciliation & sync-exceptions dashboard (feature branch, NOT yet deployed)
+## v2.17.1 — Reconciliation dashboard: guided operator actions (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/reconciliation-guidance-v2.17.1` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). **No schema change.** |
+| **Status** | Code complete; tests green (587 passed; +29 new); ruff clean; jinja compiles; alembic single head; **not merged, not deployed, not tagged**. |
+| **UX-only** | No business-logic change. No new route. No mutation surface. Three new pure recommended-action helpers + a `recommended_action: str` field on each row dataclass; the template renders it in a new "Next step" column. Patch bump because /healthz should clearly identify the polished version. |
+
+**Why this release** — v2.17.0 surfaced the exception data; operators next needed "what should I do?" guidance per row, plus a top-level help disclosure, plus an item-detail → reconciliation cross-link so they can land on a filtered view when investigating a single SKU.
+
+**v2.17.1 scope**
+
+* **Three pure recommended-action helpers** in `services/inventory_reconciliation.py`:
+  * `recommended_variance_action(status)` — `PACKTRACK_HIGHER` → "Review recent adjustments / confirm Zoho sync"; `ZOHO_HIGHER` → "Cycle count or review PackTrack movements"; `SNAPSHOT_STALE` → "Wait for next sync or review Zoho sync health"; `IN_SYNC` → `""` (not shown in table)
+  * `recommended_stale_action(status, zoho_item_id)` — `MISSING` w/ Zoho id → "Await snapshot sync / check integration"; `MISSING` w/o Zoho id → "Link Zoho item or mark as local-only"; `STALE` → "Wait for next sync or review Zoho sync health"
+  * `recommended_exception_action(status, eligibility)` — eligible FAILED/PENDING → "Retry sync"; `NOT_CONFIGURED` → "Check integration configuration"; `SKIPPED` → "Link item to Zoho before syncing"; blocked rows surface the specific no-action copy ("No action — already compensated locally" / "...retry blocked to prevent drift" / "...voided locally" / "Already synced")
+* **New `recommended_action: str` field** on `VarianceRow`, `StaleSnapshotRow`, `SyncExceptionRow`. Populated deterministically by the section builders at row construction time.
+* **Dashboard template additions**:
+  * Top "How to resolve exceptions" `<details>` disclosure below the policy banner, listing the four operator rules (Adjust quantity / Cycle count; Retry sync only for unblocked failures; never manually edit Zoho stock to "fix" variance; variance is a signal, not an automatic correction).
+  * New "Next step" column in each section table, rendered with `data-testid="reconciliation-{variance,stale,exception}-action-{id}"`.
+* **Item detail cross-link** (`templates/inventory_detail.html`) — subtle "Review reconciliation →" link in the Stock card, rendered only when `zoho_stock_variance` is non-zero. URL pre-filters by `?q={material_code|sku|name}` so the operator lands on a useful filtered view.
+* **Read-only invariant preserved** — the recommended_action field is computed at row-build time from already-loaded state; no extra DB queries; no writes.
+
+**Tests (+29 cases in `tests/test_v2_17_1_reconciliation_guidance.py`)** — 13 cover the three pure helpers (every status code & edge case); 5 cover the section builders attaching the correct action; 5 cover the template rendering (how-to-resolve block, each section's action copy, blocked-row no-action copy); 1 covers the non-owner gate (sees copy + no Retry button); 2 cover the item-detail cross-link (visible only when variance, hidden when in-sync); 1 covers the `?q=material_code` filter round-trip from the item detail link to the dashboard; 1 read-only invariant test snapshots all stock + adjustment fields before/after `build_dashboard`; 1 import-surface defense (no Zoho/OAuth import in the touched service module).
+
+**Permissions preserved** — non-owners see the action copy (read-only guidance is universal) but no Retry mutation form. Existing role gates on `POST /inventory/adjustments/{id}/sync` (require_owner → 403) and the v2.16.3 retry-eligibility gate (409 on blocked rows) unchanged.
+
+**Hard contract preserved.** No business-logic change. No schema change — single Alembic head still `i5j6k7l8m9n0`. No mutation surface on the dashboard. No PackTrack→Zoho direct call. No Receiving file touched. `services/inventory_adjustments.py` (creator), `services/inventory_adjustment_sync.py` (orchestrator), `services/cycle_count.py` untouched. No new dependency. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0/v2.16.1/v2.16.2/v2.16.3/v2.17.0 contracts intact.
+
+---
+
+## v2.17.0 — Inventory reconciliation & sync-exceptions dashboard (deployed + tagged via merge into main)
 
 | | |
 |---|---|
