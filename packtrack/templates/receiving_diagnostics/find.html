@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% import "_partials/ui.html" as ui %}
+{% block title %}Find a PO · Receiving · PackTrack{% endblock %}
+{% block container_class %}max-w-[1200px]{% endblock %}
+{% block content %}
+
+{{ ui.page_header(
+     title="Find a PO",
+     subtitle="Search synced Zoho POs · see why one is or isn't actionable",
+     secondary=[
+       {"label": "← Receiving", "href": "/receive"},
+       {"label": "Settings → Sync", "href": "/admin/sync"},
+     ],
+) }}
+
+<form method="get" action="/receive/find"
+      data-testid="receive-find-form"
+      class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm mb-5
+             flex items-center gap-2">
+  <input name="q" type="text" value="{{ query }}"
+         autofocus
+         placeholder="PO number · vendor · item name · zoho id"
+         data-testid="receive-find-input"
+         class="flex-1 rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+  <button class="rounded-lg bg-stone-900 text-white text-sm font-medium px-4 py-2 hover:bg-stone-800">
+    Search
+  </button>
+  {% if query %}
+    <a href="/receive/find" class="text-xs text-stone-500 hover:text-stone-900">clear</a>
+  {% endif %}
+</form>
+
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"
+     data-testid="receive-find-summary">
+  {{ ui.summary_card(label="Mirrored POs",
+                     value=report.counts.get('total_mirrors', 0),
+                     tone="neutral") }}
+  {{ ui.summary_card(label="Actionable now",
+                     value=report.counts.get('actionable_start_receive', 0),
+                     tone="ok" if report.counts.get('actionable_start_receive', 0) else "neutral") }}
+  {{ ui.summary_card(label="Fully received",
+                     value=report.counts.get('fully_received', 0),
+                     tone="neutral") }}
+  {{ ui.summary_card(label="Missing material codes",
+                     value=report.counts.get('missing_material_codes', 0),
+                     tone="warn" if report.counts.get('missing_material_codes', 0) else "neutral") }}
+</div>
+
+<div class="bg-stone-50 border border-stone-200 rounded-2xl p-3 mb-5
+            text-[11px] text-stone-600 flex items-center justify-between gap-3"
+     data-testid="receive-find-sync-strip">
+  <div>
+    {% if report.last_sync %}
+      Last sync run #{{ report.last_sync.id }} · status
+      <span class="font-mono">{{ report.last_sync.status }}</span> ·
+      {{ report.last_sync.po_mirrored }} POs mirrored ·
+      finished
+      {{ minutes_since_last_sync if minutes_since_last_sync is not none else '—' }} min ago.
+    {% else %}
+      No sync run recorded yet.
+    {% endif %}
+  </div>
+  <div>
+    Receiving vNext flag:
+    <span class="font-mono uppercase text-{{ 'emerald' if report.vnext_enabled else 'red' }}-700">
+      {{ 'on' if report.vnext_enabled else 'off' }}
+    </span>
+  </div>
+</div>
+
+{% if report.diagnostics %}
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden mb-5">
+    <table class="w-full text-sm" data-testid="receive-find-table">
+      <thead class="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-400">
+        <tr>
+          <th class="text-left font-semibold px-4 py-2">PO</th>
+          <th class="text-left font-semibold px-4 py-2">Vendor</th>
+          <th class="text-left font-semibold px-4 py-2">Bucket</th>
+          <th class="text-right font-semibold px-4 py-2">Received / Ordered</th>
+          <th class="text-left font-semibold px-4 py-2">Visibility</th>
+          <th class="text-left font-semibold px-4 py-2">Action</th>
+        </tr>
+      </thead>
+      <tbody class="text-stone-700 divide-y divide-stone-100">
+        {% for d in report.diagnostics %}
+          <tr data-testid="receive-find-row-{{ d.zoho_purchaseorder_id }}">
+            <td class="px-4 py-2">
+              <div class="font-medium">{{ d.purchaseorder_number or '—' }}</div>
+              <div class="text-[10px] text-stone-400 font-mono">
+                zoho {{ d.zoho_purchaseorder_id }} · status {{ d.zoho_status or '—' }}
+              </div>
+              {% if d.pt_po_id %}
+                <div class="text-[10px] text-stone-500">
+                  PT #{{ d.pt_po_id }} · {{ d.pt_po_number }} ·
+                  {{ d.pt_po_status or '—' }}
+                </div>
+              {% else %}
+                <div class="text-[10px] text-amber-700">
+                  not linked to PackTrack PO yet
+                </div>
+              {% endif %}
+              {% if d.missing_material_code_count %}
+                <div class="text-[10px] text-amber-700">
+                  ⚠ {{ d.missing_material_code_count }} item(s) missing material_code
+                </div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2">
+              {{ d.vendor_name or '—' }}
+              {% if d.po_date %}
+                <div class="text-[10px] text-stone-400">{{ d.po_date }}</div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2">
+              {% set bucket_class = {
+                  'pending': 'text-amber-700',
+                  'partial': 'text-amber-700',
+                  'fully_received': 'text-emerald-700',
+                  'no_line_items': 'text-stone-400',
+                }[d.bucket] %}
+              <span class="text-[11px] font-mono uppercase tracking-wider {{ bucket_class }}">
+                {{ d.bucket }}
+              </span>
+            </td>
+            <td class="px-4 py-2 text-right tabular-nums">
+              {{ d.total_received|int }} / {{ d.total_ordered|int }}
+              <div class="text-[10px] text-stone-400">
+                {{ d.line_count }} line{{ '' if d.line_count == 1 else 's' }}
+              </div>
+            </td>
+            <td class="px-4 py-2 text-[11px]">
+              <div>
+                Visible on /receive:
+                <span class="font-mono text-emerald-700">yes</span>
+              </div>
+              <div>
+                Start receive:
+                {% if d.start_receive_available %}
+                  <span class="font-mono text-emerald-700">available</span>
+                {% else %}
+                  <span class="font-mono text-amber-700">unavailable</span>
+                {% endif %}
+              </div>
+              {% if d.start_receive_reason %}
+                <div class="mt-1 text-[10px] text-stone-500 max-w-md">
+                  {{ d.start_receive_reason }}
+                </div>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2">
+              {% if d.start_receive_url %}
+                <a href="{{ d.start_receive_url }}"
+                   data-testid="receive-find-start-{{ d.zoho_purchaseorder_id }}"
+                   class="inline-flex items-center gap-1 rounded-lg bg-stone-900 text-white text-xs font-medium px-3 py-1.5 hover:bg-stone-800">
+                  Start receive →
+                </a>
+              {% elif d.pt_po_id %}
+                <a href="/po/{{ d.pt_po_id }}"
+                   class="text-[11px] text-stone-500 hover:text-stone-900 underline decoration-stone-300">
+                  Open PT PO
+                </a>
+              {% else %}
+                <a href="/receive/{{ d.zoho_purchaseorder_id }}"
+                   class="text-[11px] text-stone-500 hover:text-stone-900 underline decoration-stone-300"
+                   title="Opening the legacy receive route adopts the PO into PackTrack">
+                  Adopt via legacy
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="bg-white border border-stone-200 rounded-2xl shadow-sm">
+    {{ ui.empty_state(
+         title="No mirrors match" if query else "No mirrors yet",
+         body=("No synced Zoho PO matched the query " ~ query ~ ".") if query else "Trigger Settings → Sync or wait for the 30-min auto-sync.",
+    ) }}
+  </div>
+{% endif %}
+
+<div class="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm">
+  <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-500 mb-2">
+    PO you expected isn't in the list?
+  </h2>
+  <p class="text-sm text-stone-700 mb-2"
+     data-testid="receive-find-missing-hint">
+    {{ report.not_in_mirror_hint }}
+  </p>
+  <ul class="text-xs text-stone-600 list-disc list-inside space-y-1">
+    <li>Open the PO in Zoho. Confirm the <em>Packaging?</em> checkbox is ticked
+        (custom field <code class="font-mono">cf_packaging_unformatted</code>).</li>
+    <li>Confirm the PO status is not <code class="font-mono">cancelled</code>
+        or <code class="font-mono">void</code>.</li>
+    <li>Trigger <a href="/admin/sync" class="underline">Settings → Sync</a>
+        and re-run this search after a minute.</li>
+    <li>If still missing after a clean sync, the integration service
+        gateway is the next thing to check — see service health on
+        LXC 9503 and the receiving runbook.</li>
+  </ul>
+</div>
+
+{% endblock %}

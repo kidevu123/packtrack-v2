@@ -9,6 +9,25 @@
      subtitle="Packaging POs pending warehouse receipt.",
 ) }}
 
+{# v2.15.0 — prominent Find-a-PO entry point. Receives start from a
+   PO; if the operator can't see what they expect below, this is the
+   one place to ask "where is it and why?". #}
+<a href="/receive/find"
+   data-testid="receiving-find-link"
+   class="block bg-white border border-stone-200 rounded-2xl p-4 shadow-sm mb-4
+          hover:border-stone-500 transition-colors">
+  <div class="flex items-baseline justify-between gap-2">
+    <div>
+      <p class="text-sm font-semibold text-stone-900">Find a PO / Start receive →</p>
+      <p class="text-xs text-stone-500 mt-1">
+        Receives start from a purchase order. If you do not see the PO below,
+        search to see whether it is synced, linked, fully received, or missing setup.
+      </p>
+    </div>
+    <span class="text-[11px] font-mono text-stone-400 hidden sm:inline">⌘ K</span>
+  </div>
+</a>
+
 {# v2.13.0 — discoverable pointer to the operator runbook. The doc
    lives in the repo at docs/RUNBOOK_RECEIVING_VNEXT_OPERATOR.md;
    readable by owners on the host or via GitHub. #}

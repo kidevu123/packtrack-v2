@@ -34,6 +34,43 @@ If a PO you expect doesn't show up: the Zoho mirror sync hasn't yet
 imported it. Wait for the next 30-minute cycle or trigger Settings →
 Sync.
 
+### 1a. Finding a missing PO (v2.15.0)
+
+`/receive/find` is the in-app diagnostic. Use it as the FIRST stop
+when "I don't see PO X" comes up. It answers three questions per row:
+
+- Is this PO visible on `/receive`?
+- Is the Start receive button available?
+- If no, what's the exact reason and what should I do?
+
+The page lists every synced Zoho PO with its bucket (`pending` /
+`partial` / `fully_received` / `no_line_items`), linkage to a
+PackTrack `PurchaseOrder`, missing material-code count, and a
+plain-text reason when an action isn't available. Search by PO
+number, vendor, item name, or Zoho id.
+
+**Common hidden reasons (each has a clear next step):**
+
+| Reason | What to do |
+|---|---|
+| `Mirror reports this PO is fully received` | Open it in the "Fully received" section. If Zoho is wrong, fix upstream first — PackTrack will not let you create a receive for a fully-received PO. |
+| `Synced from Zoho but no PackTrack PurchaseOrder row is linked yet` | Click the row's "Adopt via legacy" link — opening the legacy `/receive/{zoho_po_id}` route adopts the PO into PackTrack and gives you a `PurchaseOrder` row. Then the vNext Start receive button will be available on the next refresh. |
+| `Receiving vNext flag (RECEIVING_VNEXT_ENABLED) is off` | Owner action: flip the env var in `/etc/packtrack/packtrack.env` and restart the service. Legacy `/receive/{zoho_po_id}` continues to work in the meantime. |
+
+**If the PO isn't in the diagnostic at all:** it's not yet in the
+Zoho mirror. Three most common root causes:
+
+1. **Zoho status is `cancelled` or `void`** — the sync's Pass 1 filter
+   excludes these. Re-open the PO in Zoho if needed.
+2. **The Zoho "Packaging?" checkbox (`cf_packaging_unformatted`) is
+   not ticked.** Pass 2 of the sync is packaging-only. Tick the box
+   in Zoho, then trigger Settings → Sync.
+3. **The 30-min auto-sync hasn't run since the PO was created.**
+   Trigger Settings → Sync manually.
+
+After fixing any of the above, click "Search" again on
+`/receive/find` to re-check.
+
 ## 2. Starting a receive
 
 1. From `/receive`, find the PO card. Verify the readiness pill.

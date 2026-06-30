@@ -1,6 +1,31 @@
 # Current Phase Status
 
-## v2.14.0 — Inventory cycle-count batch workflow (feature branch, NOT yet deployed)
+## v2.15.0 — Receiving PO visibility diagnostic (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/receiving-po-visibility-diagnostics-v2.15.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). No schema change. |
+| **Status** | Code complete; tests green (489 passed; +23 over v2.14.0's 466); **not merged, not deployed, not tagged**. |
+
+**Why this release exists** — operator reported "not all POs appear on /receive". A read-only audit of production data showed: sync is healthy (12 mirrors every ~12 min), `/receive` filter is correct, all 12 mirrored POs are linked. The "missing" POs are most likely (a) Zoho status `cancelled`/`void` (excluded by sync), (b) Zoho's `cf_packaging_unformatted` checkbox not ticked (excluded by sync's packaging filter), or (c) the PO doesn't exist in Zoho yet. **No code-side bug** — but the operator has no in-app way to ask "where is PO X and why isn't it actionable?" v2.15.0 ships exactly that.
+
+**v2.15.0 scope** — adds an in-app diagnostic page so operators can self-serve PO visibility questions before shipments arrive.
+
+* **New route** `GET /receive/find` (OWNER + RECEIVING) — `packtrack/routes/receiving_diagnostics.py`. Pure read, never mutates, never calls upstream.
+* **New service** `packtrack/services/receiving_po_visibility.py::build_visibility_report()` — for each `ZohoMirror`, returns a `MirrorDiagnostic` with: bucket (`pending` / `partial` / `fully_received` / `no_line_items`), linkage to `PurchaseOrder`, missing material-code count, `appears_on_receive` flag, `start_receive_available` flag, exact `start_receive_reason` explaining either "ready to act" or why the Start receive button isn't shown, and a direct `start_receive_url` when actionable. Supports a free-text `query` filter over PO number / vendor / item names / zoho id.
+* **New template** `receiving_diagnostics/find.html` — search box, summary chips (mirrored / actionable / fully-received / missing-codes), last-sync status strip with minutes-since, per-mirror diagnostic table, and a permanent "PO not in the list?" panel that names the three most likely Zoho-side root causes.
+* **New `/receive` entry point** — prominent "Find a PO / Start receive →" card at the top, copy: *"Receives start from a purchase order. If you do not see the PO below, search to see whether it is synced, linked, fully received, or missing setup."*
+* **No `/receive` filter changes** — production data confirms the existing filter is correct; the diagnostic surfaces the truth instead of hiding it.
+* **Router registration order** — `receiving_diagnostics.router` is registered BEFORE `receiving.router` in `main.py` so the static `/receive/find` path wins over `receiving.router`'s dynamic `/receive/{zoho_po_id}`. Regression test confirms the legacy route still resolves for unknown ids.
+
+**Tests (+23 cases, total 489)** in `tests/test_v2_15_0_receiving_po_visibility.py`: auth (OWNER, RECEIVING allowed; DESIGN 403) · pending linked PO is actionable · fully-received shows hidden reason + no Start receive · unlinked mirror shows the not-linked reason · vNext flag off blocks Start with flag-off reason · search by PO number / vendor / item name / zoho id · missing material codes surface but don't block · GET creates no Receive / PO / mirror rows · `/receive` shows the Find link · `/receive/v2/new?po_id=…` remains non-mutating · legacy `/receive/{zoho_po_id}` still resolves (static-vs-dynamic order regression) · source-level guard on the diagnostic service (no Zoho/OAuth/HTTP) · diagnostic route imports no Luma symbol · empty mirror table renders an empty state · `counts` dict matches bucket distribution · `diagnose_mirror` handles empty line items.
+
+**Hard contract preserved.** No schema change. PackTrack still never calls Zoho directly. No Receiving payload changes. No mutation from the diagnostic page. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0 contracts intact. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.14.0 — Inventory cycle-count batch workflow (deployed + tagged via merge into main)
 
 | | |
 |---|---|
