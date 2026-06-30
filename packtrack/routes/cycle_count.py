@@ -1,9 +1,10 @@
-"""Cycle-count routes (v2.14.0).
+"""Cycle-count routes (v2.14.0, v2.18.0 count-sheet export).
 
-Two endpoints:
+Endpoints:
 
-  GET  /inventory/cycle-count   — owner-only form with item list
-  POST /inventory/cycle-count   — owner-only batch submit
+  GET  /inventory/cycle-count       — owner-only form with item list
+  POST /inventory/cycle-count       — owner-only batch submit
+  GET  /inventory/cycle-count.csv   — owner-only count-sheet CSV (v2.18.0)
 
 The submit POST is all-or-nothing at validation time: a single bad row
 keeps the entire batch from touching the database. Successfully
@@ -11,11 +12,15 @@ validated rows create one immutable adjustment per non-zero variance
 via the existing v2.9.0 adjustment service, and the v2.10.0 Zoho sync
 runs for each. Local stock is never written outside the existing
 service.
+
+The CSV export is READ-ONLY — never writes, never calls Zoho. Only
+whitelisted columns reach the response body (see
+``services.cycle_count.COUNT_SHEET_COLUMNS``).
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlmodel import Session, select
 
 from packtrack.db import get_session
@@ -23,6 +28,9 @@ from packtrack.deps import require_user
 from packtrack.models import Item, Role, User, ZohoSyncStatus
 from packtrack.services.cycle_count import (
     CycleCountInputRow,
+    build_count_sheet_rows,
+    format_count_sheet_csv,
+    list_product_lines,
     submit_cycle_count,
 )
 
@@ -78,6 +86,39 @@ def cycle_count_form(
         {
             "user": user,
             "items": items,
+            "product_lines": list_product_lines(session),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# v2.18.0 — count-sheet CSV export (READ-ONLY)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/inventory/cycle-count.csv", response_class=PlainTextResponse)
+def cycle_count_csv(
+    q: str = "",
+    product_line: str = "",
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Owner-only CSV export of the cycle-count sheet.
+
+    Mirrors the form's filter contract (``q`` substring search across
+    name/material_code/sku; ``product_line`` exact match). Strictly
+    read-only — see ``services.cycle_count.build_count_sheet_rows``.
+
+    Response carries ``Content-Disposition: attachment`` so the browser
+    triggers a download instead of rendering in-tab."""
+    _require_owner(user)
+    rows = build_count_sheet_rows(session, q=q, product_line=product_line)
+    body = format_count_sheet_csv(rows)
+    return PlainTextResponse(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="cycle-count.csv"',
         },
     )
 

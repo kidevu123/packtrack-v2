@@ -10,8 +10,37 @@
      secondary=[
        {"label": "← Inventory", "href": "/inventory"},
        {"label": "Adjustment history", "href": "/inventory/adjustments"},
+       {"label": "Export CSV", "href": "/inventory/cycle-count.csv"},
+       {"label": "Print sheet", "href": "javascript:window.print()"},
      ],
 ) }}
+
+{# v2.18.0 print stylesheet — strips chrome and ink-heavy backgrounds
+   so the printed page is a clean count sheet (Item · Code · Current
+   PT qty · blank Counted qty · blank Notes). Hides nav, header,
+   filter/toggle controls, the Submit button, and the Δ + After
+   computed columns. The Note + Counted inputs become blank handwriting
+   space via `cc-counted-cell` / `cc-print-only` styling. #}
+<style>
+@media print {
+  body, html { background: #fff !important; }
+  header, footer, nav { display: none !important; }
+  [data-testid="cycle-count-shared-note"],
+  [data-testid="cycle-count-filter"],
+  [data-testid="cycle-count-product-line"],
+  [data-testid="cycle-count-only-counted"],
+  [data-testid="cycle-count-submit-summary"],
+  [data-testid="cycle-count-submit"],
+  .no-print { display: none !important; }
+  th.cc-print-hide, td.cc-print-hide { display: none !important; }
+  table { border-collapse: collapse; width: 100%; font-size: 11pt; }
+  thead { background: #fff !important; color: #000 !important; }
+  th, td { border: 1px solid #555 !important; padding: 6px 8px !important; color: #000 !important; }
+  td.cc-counted-cell input,
+  td.cc-note-cell input { display: none !important; }
+  td.cc-counted-cell, td.cc-note-cell { min-width: 90px; height: 30px; }
+}
+</style>
 
 {% if warning %}
   <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 shadow-sm mb-5"
@@ -55,15 +84,53 @@
      so a large inventory doesn't need a server round-trip. Counted
      quantity stays the only field operators have to type, and per-row
      notes are optional. #}
-  <label class="block">
-    <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">
-      Filter (live)
-    </span>
-    <input id="cycle-count-filter" type="text"
-           data-testid="cycle-count-filter"
-           placeholder="Type to filter by name, material code or SKU…"
-           class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
-  </label>
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+    <label class="block sm:col-span-2">
+      <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">
+        Filter (live)
+      </span>
+      <input id="cycle-count-filter" type="text"
+             data-testid="cycle-count-filter"
+             placeholder="Type to filter by name, material code or SKU…"
+             class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0" />
+    </label>
+    {% if product_lines %}
+      <label class="block">
+        <span class="text-xs font-semibold uppercase tracking-wider text-stone-500">
+          Product line
+        </span>
+        <select id="cycle-count-product-line"
+                data-testid="cycle-count-product-line"
+                class="mt-1 w-full rounded-lg border-stone-300 text-sm px-3 py-2 focus:border-stone-500 focus:ring-0">
+          <option value="">All</option>
+          {% for pl in product_lines %}
+            <option value="{{ pl }}">{{ pl }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+  </div>
+
+  {# v2.18.0 — "Show only counted" toggle hides every row whose counted
+     input is blank. Useful once the operator has filled in a few rows
+     and wants to review just those before submitting. Pure client-side
+     JS at the bottom of the file. #}
+  <div class="flex items-center justify-between gap-3 no-print">
+    <label class="inline-flex items-center gap-2 text-xs text-stone-700">
+      <input id="cycle-count-only-counted" type="checkbox"
+             data-testid="cycle-count-only-counted"
+             class="rounded border-stone-400" />
+      Show only rows with counts entered
+    </label>
+    <p class="text-xs text-stone-500" data-testid="cycle-count-submit-summary">
+      <span data-cc-summary-variances>0</span>
+      <span data-cc-summary-variances-noun>variances</span>
+      will create adjustments,
+      <span data-cc-summary-zeros>0</span>
+      <span data-cc-summary-zeros-noun>zero-variance rows</span>
+      will be skipped.
+    </p>
+  </div>
 
   <div class="overflow-x-auto border border-stone-200 rounded-xl">
     <table class="w-full text-sm" data-testid="cycle-count-table">
@@ -72,17 +139,18 @@
           <th class="text-left font-semibold px-3 py-2">Item</th>
           <th class="text-left font-semibold px-3 py-2">Code</th>
           <th class="text-right font-semibold px-3 py-2">Current (PT)</th>
-          <th class="text-right font-semibold px-3 py-2">Zoho snapshot</th>
+          <th class="text-right font-semibold px-3 py-2 cc-print-hide">Zoho snapshot</th>
           <th class="text-right font-semibold px-3 py-2">Counted</th>
-          <th class="text-right font-semibold px-3 py-2">Δ</th>
-          <th class="text-right font-semibold px-3 py-2">After</th>
-          <th class="text-left font-semibold px-3 py-2">Note (optional)</th>
+          <th class="text-right font-semibold px-3 py-2 cc-print-hide">Δ</th>
+          <th class="text-right font-semibold px-3 py-2 cc-print-hide">After</th>
+          <th class="text-left font-semibold px-3 py-2">Note</th>
         </tr>
       </thead>
       <tbody class="text-stone-700 divide-y divide-stone-100">
         {% for it in items %}
           <tr data-testid="cycle-count-row-{{ it.id }}"
               data-current="{{ it.current_stock or 0 }}"
+              data-product-line="{{ it.product_line or '' }}"
               data-search="{{ (it.name or '')|lower }} {{ (it.material_code or '')|lower }} {{ (it.sku_code or '')|lower }}">
             <td class="px-3 py-1.5">
               <span class="font-medium">{{ it.name or 'item ' ~ it.id }}</span>
@@ -100,7 +168,7 @@
             {# v2.16.0 — Zoho snapshot column (v2.11.0 stock-ownership
                policy). Informational only; the variance preview uses
                PT current_stock as the baseline. #}
-            <td class="px-3 py-1.5 text-right tabular-nums"
+            <td class="px-3 py-1.5 text-right tabular-nums cc-print-hide"
                 data-testid="cycle-count-zoho-{{ it.id }}">
               {% if it.last_zoho_stock_snapshot is not none %}
                 {# Coerce both sides to float for the template-only
@@ -121,7 +189,7 @@
                 <span class="text-stone-300">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-1.5 text-right">
+            <td class="px-3 py-1.5 text-right cc-counted-cell">
               <input name="counted_{{ it.id }}"
                      type="number" step="any" min="0"
                      value="{{ (submitted_counted.get(it.id, '') if submitted_counted is defined else '') }}"
@@ -133,13 +201,13 @@
             {# v2.16.0 — live Δ + After. JS at the end of the form
                rewrites these per keystroke. Server enforces
                all-or-nothing validation; this is operator UX. #}
-            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400"
+            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400 cc-print-hide"
                 data-testid="cycle-count-delta-{{ it.id }}"
                 data-cc-delta="{{ it.id }}">—</td>
-            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400"
+            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400 cc-print-hide"
                 data-testid="cycle-count-after-{{ it.id }}"
                 data-cc-after="{{ it.id }}">—</td>
-            <td class="px-3 py-1.5">
+            <td class="px-3 py-1.5 cc-note-cell">
               <input name="note_{{ it.id }}"
                      value="{{ (submitted_notes.get(it.id, '') if submitted_notes is defined else '') }}"
                      placeholder="(blank → uses shared note)"
@@ -168,15 +236,58 @@
 
 <script>
 (function () {
+  const allRows = document.querySelectorAll('tr[data-search]');
   const filter = document.getElementById('cycle-count-filter');
-  if (filter) {
-    const rows = document.querySelectorAll('tr[data-search]');
-    filter.addEventListener('input', function (e) {
-      const q = (e.target.value || '').trim().toLowerCase();
-      rows.forEach(function (r) {
-        r.style.display = (!q || r.dataset.search.indexOf(q) !== -1) ? '' : 'none';
-      });
+  const productLine = document.getElementById('cycle-count-product-line');
+  const onlyCounted = document.getElementById('cycle-count-only-counted');
+
+  // v2.18.0 — unified row-visibility pass. Combines the text filter,
+  // the product-line filter, and the "show only counts entered" toggle.
+  // Pure client-side; no server round-trips.
+  function applyFilters() {
+    const q = (filter && filter.value || '').trim().toLowerCase();
+    const pl = (productLine && productLine.value || '');
+    const onlyC = !!(onlyCounted && onlyCounted.checked);
+    allRows.forEach(function (r) {
+      let visible = true;
+      if (q && r.dataset.search.indexOf(q) === -1) visible = false;
+      if (visible && pl && (r.dataset.productLine || '') !== pl) visible = false;
+      if (visible && onlyC) {
+        const inp = r.querySelector('input[data-cc-counted]');
+        if (!inp || !(inp.value || '').trim()) visible = false;
+      }
+      r.style.display = visible ? '' : 'none';
     });
+  }
+  if (filter) filter.addEventListener('input', applyFilters);
+  if (productLine) productLine.addEventListener('change', applyFilters);
+  if (onlyCounted) onlyCounted.addEventListener('change', applyFilters);
+
+  // v2.18.0 — live "X variances / Y zero-variance skipped" summary in
+  // the toolbar above the table. Recomputes on every counted-input
+  // edit so the operator sees the pre-submit shape before clicking.
+  const summaryVariances = document.querySelector('[data-cc-summary-variances]');
+  const summaryVariancesNoun = document.querySelector('[data-cc-summary-variances-noun]');
+  const summaryZeros = document.querySelector('[data-cc-summary-zeros]');
+  const summaryZerosNoun = document.querySelector('[data-cc-summary-zeros-noun]');
+  function updateSummary() {
+    if (!summaryVariances) return;
+    let variances = 0;
+    let zeros = 0;
+    document.querySelectorAll('input[data-cc-counted]').forEach(function (inp) {
+      const raw = (inp.value || '').trim();
+      if (raw === '') return;
+      const counted = parseFloat(raw);
+      if (isNaN(counted)) return;  // invalid rows surface via Δ cell only
+      const row = inp.closest('tr');
+      const cur = parseFloat(row.dataset.current || '0');
+      if (counted === cur) zeros += 1;
+      else variances += 1;
+    });
+    summaryVariances.textContent = String(variances);
+    summaryZeros.textContent = String(zeros);
+    if (summaryVariancesNoun) summaryVariancesNoun.textContent = variances === 1 ? 'variance' : 'variances';
+    if (summaryZerosNoun) summaryZerosNoun.textContent = zeros === 1 ? 'zero-variance row' : 'zero-variance rows';
   }
 
   // v2.16.0 — live Δ + Expected after preview as the operator types.
@@ -193,17 +304,19 @@
       const raw = (countedInput.value || '').trim();
       if (raw === '') {
         deltaCell.textContent = '—';
-        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400 cc-print-hide';
         afterCell.textContent = '—';
-        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400 cc-print-hide';
+        updateSummary();
         return;
       }
       const counted = parseFloat(raw);
       if (isNaN(counted)) {
         deltaCell.textContent = 'invalid';
-        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-red-700';
+        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-red-700 cc-print-hide';
         afterCell.textContent = '—';
-        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400 cc-print-hide';
+        updateSummary();
         return;
       }
       const delta = counted - currentStock;
@@ -213,15 +326,23 @@
       if (delta > 0) { deltaClass = 'text-emerald-700'; deltaText = '+' + delta; }
       else if (delta < 0) { deltaClass = 'text-red-700'; deltaText = String(delta); }
       deltaCell.textContent = deltaText;
-      deltaCell.className = 'px-3 py-1.5 text-right tabular-nums ' + deltaClass;
+      deltaCell.className = 'px-3 py-1.5 text-right tabular-nums cc-print-hide ' + deltaClass;
       afterCell.textContent = String(after);
       const afterClass = after < 0 ? 'text-red-700 font-semibold' : 'text-stone-700';
-      afterCell.className = 'px-3 py-1.5 text-right tabular-nums ' + afterClass;
+      afterCell.className = 'px-3 py-1.5 text-right tabular-nums cc-print-hide ' + afterClass;
+      updateSummary();
     }
 
-    countedInput.addEventListener('input', update);
+    countedInput.addEventListener('input', function () {
+      update();
+      if (onlyCounted && onlyCounted.checked) applyFilters();
+    });
     if (countedInput.value) update();
   });
+
+  // Initial summary pass so pre-filled values (after validation
+  // round-trip) show their counts immediately.
+  updateSummary();
 })();
 </script>
 

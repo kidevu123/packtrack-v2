@@ -26,11 +26,14 @@ client. All three paths go through the existing service modules.
 """
 from __future__ import annotations
 
+import csv
+import io
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from packtrack.models import (
     AdjustmentMode,
@@ -295,3 +298,173 @@ def submit_cycle_count(
         ))
 
     return BatchOutcome(rows=rows, errors=[])
+
+
+# ---------------------------------------------------------------------------
+# v2.18.0 — Count-sheet export (READ-ONLY)
+# ---------------------------------------------------------------------------
+#
+# Helpers that produce a printable/CSV count sheet for operators doing a
+# physical count. **STRICTLY READ-ONLY**: no DB writes, no Zoho calls,
+# no mutation of Item.current_stock or any adjustment row.
+#
+# Whitelist policy (security): only fields explicitly listed in
+# COUNT_SHEET_COLUMNS reach the CSV. Pricing, accounts, vendor IDs,
+# integration-service tokens, and Zoho sync error messages are
+# deliberately excluded — see the test
+# tests/test_v2_18_0_cycle_count_sheet::test_csv_excludes_sensitive_fields.
+
+# CSV column order. The exact tuple the test asserts on. Adding a column
+# requires an explicit security review (see the docstring above).
+COUNT_SHEET_COLUMNS: tuple[str, ...] = (
+    "item_id",
+    "item_name",
+    "material_code",
+    "sku_code",
+    "vendor",
+    "product_line",
+    "current_packtrack_qty",
+    "zoho_snapshot_qty",
+    "zoho_variance",
+    "counted_qty",
+    "notes",
+)
+
+
+@dataclass(frozen=True)
+class CountSheetRow:
+    """One row in the printable / CSV count sheet.
+
+    ``counted_qty`` and ``notes`` are intentionally blank — they are the
+    columns the operator fills in by hand or in a spreadsheet. The other
+    columns are reference values pulled at export time."""
+
+    item_id: int
+    item_name: str
+    material_code: str
+    sku_code: str
+    vendor: str
+    product_line: str
+    current_packtrack_qty: Decimal
+    zoho_snapshot_qty: Decimal | None
+    zoho_variance: Decimal | None
+    counted_qty: str = ""
+    notes: str = ""
+
+
+def _decimal_or_none(value) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _to_decimal(value) -> Decimal:
+    return _decimal_or_none(value) or Decimal("0")
+
+
+def _matches(needle: str, *fields: str | None) -> bool:
+    """Case-insensitive substring match across name/material_code/sku.
+    Empty needle matches everything."""
+    if not needle:
+        return True
+    n = needle.lower().strip()
+    if not n:
+        return True
+    return any(f and n in f.lower() for f in fields)
+
+
+def build_count_sheet_rows(
+    session: Session, *,
+    q: str = "",
+    product_line: str = "",
+) -> list[CountSheetRow]:
+    """Build the count sheet for the operator-supplied filter set.
+
+    Mirrors the cycle-count form's filter contract so the exported CSV
+    matches what the operator sees on screen: a case-insensitive
+    substring across name/material_code/sku for ``q``, and an exact
+    match on ``product_line`` for the dropdown.
+
+    Read-only — no DB writes, no Zoho calls, no integration-service
+    calls. Returns rows sorted by item name (matching the form)."""
+    items = session.exec(select(Item).order_by(Item.name)).all()
+    rows: list[CountSheetRow] = []
+    for it in items:
+        if not _matches(q, it.name, it.material_code, it.sku_code):
+            continue
+        if product_line and (it.product_line or "") != product_line:
+            continue
+        pt = _to_decimal(it.current_stock)
+        zoho = _decimal_or_none(it.last_zoho_stock_snapshot)
+        variance = (pt - zoho) if zoho is not None else None
+        rows.append(CountSheetRow(
+            item_id=it.id,
+            item_name=it.name or f"item #{it.id}",
+            material_code=it.material_code or "",
+            sku_code=it.sku_code or "",
+            vendor=it.vendor or "",
+            product_line=it.product_line or "",
+            current_packtrack_qty=pt,
+            zoho_snapshot_qty=zoho,
+            zoho_variance=variance,
+        ))
+    return rows
+
+
+def _format_decimal(value: Decimal | None) -> str:
+    """Decimal-safe CSV cell formatter — strips trailing zeros while
+    preserving precision for integer-shaped values. None → empty cell."""
+    if value is None:
+        return ""
+    # Quantize down to drop spurious trailing zeros (Decimal('5.0000')
+    # → '5'), but keep meaningful precision intact (Decimal('5.5000')
+    # → '5.5'). Falls back to str() if normalize ever raises.
+    try:
+        normalized = value.normalize()
+        # normalize() can produce scientific notation for tiny values;
+        # fix up by formatting at the original scale.
+        s = format(normalized, "f")
+    except (InvalidOperation, ValueError):
+        s = str(value)
+    return s
+
+
+def format_count_sheet_csv(rows: Iterable[CountSheetRow]) -> str:
+    """Render rows to a CSV string using the locked COUNT_SHEET_COLUMNS.
+
+    Format choices: csv.QUOTE_MINIMAL so notes with commas don't break;
+    \\r\\n line terminator (RFC 4180); Decimal cells formatted via
+    _format_decimal so the upstream value's precision is preserved.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(COUNT_SHEET_COLUMNS)
+    for r in rows:
+        writer.writerow([
+            r.item_id,
+            r.item_name,
+            r.material_code,
+            r.sku_code,
+            r.vendor,
+            r.product_line,
+            _format_decimal(r.current_packtrack_qty),
+            _format_decimal(r.zoho_snapshot_qty),
+            _format_decimal(r.zoho_variance),
+            r.counted_qty,
+            r.notes,
+        ])
+    return buf.getvalue()
+
+
+def list_product_lines(session: Session) -> list[str]:
+    """Distinct, non-null Item.product_line values — for the
+    count-sheet form's product-line dropdown filter."""
+    values = session.exec(
+        select(Item.product_line).where(Item.product_line.is_not(None))
+    ).all()
+    return sorted({pl for pl in values if pl})
