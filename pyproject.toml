@@ -1,6 +1,6 @@
 [project]
 name = "packtrack"
-version = "2.16.3"
+version = "2.17.0"
 description = "Zoho-synced PO workflow for packaging sourced from China"
 requires-python = ">=3.12"
 dependencies = [

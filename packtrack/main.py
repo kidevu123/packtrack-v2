@@ -33,6 +33,7 @@ from packtrack.routes import (
     internal,
     inventory,
     inventory_adjustments,
+    inventory_reconciliation,
     purchase_orders,
     receiving,
     receiving_diagnostics,
@@ -174,6 +175,11 @@ app.include_router(inventory_adjustments.router)
 # the static '/inventory/cycle-count' path wins over the dynamic
 # '/inventory/{item_id:int}' inventory-detail route.
 app.include_router(cycle_count.router)
+# Reconciliation / sync-exceptions dashboard (v2.17.0). Same ordering
+# concern — static '/inventory/reconciliation' must be registered after
+# inventory.router so it beats the '/inventory/{item_id:int}' dynamic
+# pattern. Read-only; no writes anywhere in the route or service layer.
+app.include_router(inventory_reconciliation.router)
 # Receiving PO visibility diagnostics (v2.15.0) — registered BEFORE
 # receiving.router so the static '/receive/find' path wins over
 # receiving.router's dynamic '/receive/{zoho_po_id}' route.
