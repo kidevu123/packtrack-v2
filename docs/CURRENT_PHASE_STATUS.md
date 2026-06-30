@@ -1,6 +1,34 @@
 # Current Phase Status
 
-## v2.15.0 — Receiving PO visibility diagnostic (feature branch, NOT yet deployed)
+## v2.16.0 — Cycle-count form completeness: Zoho snapshot + live Δ/After preview (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/cycle-count-form-completeness-v2.16.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). No schema change. |
+| **Status** | Code complete; tests green (499 passed; +10 over v2.15.0's 489); **not merged, not deployed, not tagged**. |
+
+**Why this release** — an audit against the v2.14.0 cycle-count spec found two missing UX items that were called out explicitly: (1) per-row Zoho snapshot/variance display; (2) live "current / counted / delta / expected after" variance preview as the operator types. The v2.14.0 form had counted-input + post-submit result table only. v2.16.0 closes both gaps without changing the server contract.
+
+* **Zoho snapshot column** — reads the v2.11.0 `Item.last_zoho_stock_snapshot`. Shows the upstream value with an inline Δ vs PT current_stock (amber `Δ +N` when PT higher, red `Δ -N` when PT lower, emerald `in sync` when equal). Renders an em-dash when no snapshot exists. **Informational only** — the variance preview uses PT current_stock as the baseline, matching the v2.11.0 "PT is source of truth" policy. Template-side `| float` coercion bridges the float `current_stock` ↔ Decimal `snapshot` boundary; the Decimal-safe write path in `services/inventory_adjustments` is unchanged.
+* **Live Δ + After columns** — pure client-side JS hook on `data-cc-counted` inputs rewrites two new cells per keystroke: signed Δ (emerald positive / red negative / stone zero / red "invalid" for non-numeric) and After (red-bold when negative, stone otherwise). Server still enforces all-or-nothing validation; this is operator UX only. Re-fires on form re-render after a validation-error round-trip so pre-filled values show their preview immediately.
+* **Counted column header** renamed `Current` → `Current (PT)` to disambiguate from the new Zoho-snapshot column.
+
+**Tests (+10 cases, total 499)** in `tests/test_v2_16_0_cycle_count_form_completeness.py`:
+- new column headers render (Current (PT) / Zoho snapshot / Δ / After)
+- Zoho snapshot cell shows value + signed Δ when present (Decimal-safe coercion)
+- Zoho snapshot cell shows "in sync" when PT == Zoho
+- Zoho snapshot cell renders dash when snapshot absent
+- per-row data attributes (`data-current` / `data-cc-counted` / `data-cc-delta` / `data-cc-after`) present for the JS preview
+- inline preview script present
+- v2.14.0 `cycle-count-input-{id}` and `cycle-count-submit` testids unchanged (regression)
+- non-owner still 403 after form change
+
+**Hard contract preserved.** No schema change. PackTrack still never calls Zoho directly. No Receiving file touched. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0 contracts intact. The cycle-count service (`services/cycle_count.py`) is unchanged — only the form template + new tests. Single Alembic head preserved.
+
+---
+
+## v2.15.0 — Receiving PO visibility diagnostic (deployed + tagged via merge into main)
 
 | | |
 |---|---|

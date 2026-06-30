@@ -71,14 +71,18 @@
         <tr>
           <th class="text-left font-semibold px-3 py-2">Item</th>
           <th class="text-left font-semibold px-3 py-2">Code</th>
-          <th class="text-right font-semibold px-3 py-2">Current</th>
+          <th class="text-right font-semibold px-3 py-2">Current (PT)</th>
+          <th class="text-right font-semibold px-3 py-2">Zoho snapshot</th>
           <th class="text-right font-semibold px-3 py-2">Counted</th>
+          <th class="text-right font-semibold px-3 py-2">Δ</th>
+          <th class="text-right font-semibold px-3 py-2">After</th>
           <th class="text-left font-semibold px-3 py-2">Note (optional)</th>
         </tr>
       </thead>
       <tbody class="text-stone-700 divide-y divide-stone-100">
         {% for it in items %}
           <tr data-testid="cycle-count-row-{{ it.id }}"
+              data-current="{{ it.current_stock or 0 }}"
               data-search="{{ (it.name or '')|lower }} {{ (it.material_code or '')|lower }} {{ (it.sku_code or '')|lower }}">
             <td class="px-3 py-1.5">
               <span class="font-medium">{{ it.name or 'item ' ~ it.id }}</span>
@@ -93,14 +97,48 @@
               {{ it.current_stock|qty }}
               <span class="text-[10px] text-stone-400">{{ it.unit }}</span>
             </td>
+            {# v2.16.0 — Zoho snapshot column (v2.11.0 stock-ownership
+               policy). Informational only; the variance preview uses
+               PT current_stock as the baseline. #}
+            <td class="px-3 py-1.5 text-right tabular-nums"
+                data-testid="cycle-count-zoho-{{ it.id }}">
+              {% if it.last_zoho_stock_snapshot is not none %}
+                {# Coerce both sides to float for the template-only
+                   variance display. PackTrack stays Decimal-safe on
+                   the write path (services/inventory_adjustments).
+                   This is read-only UI math. #}
+                {% set zoho_float = it.last_zoho_stock_snapshot | float %}
+                {% set zoho_variance = (it.current_stock | float) - zoho_float %}
+                <span class="text-stone-600">{{ zoho_float }}</span>
+                {% if zoho_variance > 0 %}
+                  <div class="text-[10px] text-amber-700">Δ +{{ zoho_variance }}</div>
+                {% elif zoho_variance < 0 %}
+                  <div class="text-[10px] text-red-700">Δ {{ zoho_variance }}</div>
+                {% else %}
+                  <div class="text-[10px] text-emerald-700">in sync</div>
+                {% endif %}
+              {% else %}
+                <span class="text-stone-300">—</span>
+              {% endif %}
+            </td>
             <td class="px-3 py-1.5 text-right">
               <input name="counted_{{ it.id }}"
                      type="number" step="any" min="0"
                      value="{{ (submitted_counted.get(it.id, '') if submitted_counted is defined else '') }}"
                      placeholder="—"
                      data-testid="cycle-count-input-{{ it.id }}"
+                     data-cc-counted="{{ it.id }}"
                      class="w-24 rounded-lg border-stone-300 text-sm text-right tabular-nums" />
             </td>
+            {# v2.16.0 — live Δ + After. JS at the end of the form
+               rewrites these per keystroke. Server enforces
+               all-or-nothing validation; this is operator UX. #}
+            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400"
+                data-testid="cycle-count-delta-{{ it.id }}"
+                data-cc-delta="{{ it.id }}">—</td>
+            <td class="px-3 py-1.5 text-right tabular-nums text-stone-400"
+                data-testid="cycle-count-after-{{ it.id }}"
+                data-cc-after="{{ it.id }}">—</td>
             <td class="px-3 py-1.5">
               <input name="note_{{ it.id }}"
                      value="{{ (submitted_notes.get(it.id, '') if submitted_notes is defined else '') }}"
@@ -130,14 +168,59 @@
 
 <script>
 (function () {
-  const input = document.getElementById('cycle-count-filter');
-  if (!input) return;
-  const rows = document.querySelectorAll('tr[data-search]');
-  input.addEventListener('input', function (e) {
-    const q = (e.target.value || '').trim().toLowerCase();
-    rows.forEach(function (r) {
-      r.style.display = (!q || r.dataset.search.indexOf(q) !== -1) ? '' : 'none';
+  const filter = document.getElementById('cycle-count-filter');
+  if (filter) {
+    const rows = document.querySelectorAll('tr[data-search]');
+    filter.addEventListener('input', function (e) {
+      const q = (e.target.value || '').trim().toLowerCase();
+      rows.forEach(function (r) {
+        r.style.display = (!q || r.dataset.search.indexOf(q) !== -1) ? '' : 'none';
+      });
     });
+  }
+
+  // v2.16.0 — live Δ + Expected after preview as the operator types.
+  // Pure client-side; server still enforces all-or-nothing validation
+  // (negative qty, would-push-stock-negative, etc).
+  document.querySelectorAll('input[data-cc-counted]').forEach(function (countedInput) {
+    const itemId = countedInput.dataset.ccCounted;
+    const row = countedInput.closest('tr');
+    const currentStock = parseFloat(row.dataset.current || '0');
+    const deltaCell = row.querySelector('[data-cc-delta="' + itemId + '"]');
+    const afterCell = row.querySelector('[data-cc-after="' + itemId + '"]');
+
+    function update() {
+      const raw = (countedInput.value || '').trim();
+      if (raw === '') {
+        deltaCell.textContent = '—';
+        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        afterCell.textContent = '—';
+        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        return;
+      }
+      const counted = parseFloat(raw);
+      if (isNaN(counted)) {
+        deltaCell.textContent = 'invalid';
+        deltaCell.className = 'px-3 py-1.5 text-right tabular-nums text-red-700';
+        afterCell.textContent = '—';
+        afterCell.className = 'px-3 py-1.5 text-right tabular-nums text-stone-400';
+        return;
+      }
+      const delta = counted - currentStock;
+      const after = counted; // set_quantity mode: after === counted
+      let deltaClass = 'text-stone-400';
+      let deltaText = '0';
+      if (delta > 0) { deltaClass = 'text-emerald-700'; deltaText = '+' + delta; }
+      else if (delta < 0) { deltaClass = 'text-red-700'; deltaText = String(delta); }
+      deltaCell.textContent = deltaText;
+      deltaCell.className = 'px-3 py-1.5 text-right tabular-nums ' + deltaClass;
+      afterCell.textContent = String(after);
+      const afterClass = after < 0 ? 'text-red-700 font-semibold' : 'text-stone-700';
+      afterCell.className = 'px-3 py-1.5 text-right tabular-nums ' + afterClass;
+    }
+
+    countedInput.addEventListener('input', update);
+    if (countedInput.value) update();
   });
 })();
 </script>
