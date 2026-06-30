@@ -8,6 +8,7 @@
 {% set _secondary = [{"label":"Export CSV","href":"/inventory.csv"}] %}
 {% if user.role.value == 'owner' %}
   {% set _secondary = _secondary + [
+       {"label":"Cycle count","href":"/inventory/cycle-count"},
        {"label":"Sync now →","href":"/admin/sync"},
        {"label":"Forecast →","href":"/inventory/forecast"}
      ] %}
