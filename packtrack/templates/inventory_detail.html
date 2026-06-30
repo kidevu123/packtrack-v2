@@ -10,26 +10,32 @@
 {% macro mmoney(v) %}{% if v is not none %}{{ v|money('USD') }}{% else %}<span class="text-stone-400">Not set</span>{% endif %}{% endmacro %}
 
 {# ── Metadata-driven editable field (v2.8.0) ──────────────────────────── #}
+{# v2.16.2: editable inputs get an explicit border, white bg, padding and
+   hover/focus ring so the click target is obvious even when empty. Read-only
+   inputs keep stone-50 / muted text to stay visibly distinct. The
+   data-pt-editable attribute is the test hook for input affordance. #}
+{% set _pt_editable_cls = "mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm border-stone-300 transition-colors hover:border-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-200/60 focus:outline-none" %}
+{% set _pt_readonly_cls = "mt-1 w-full rounded-lg border bg-stone-50 px-3 py-2 text-sm border-stone-200 text-stone-500 cursor-not-allowed" %}
 {% macro field_input(f) %}
-  {% set base = "mt-1 w-full rounded-lg text-sm focus:border-stone-500 focus:ring-0 " %}
-  {% set cls = (base ~ "border-stone-300") if f.editable else (base ~ "border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed") %}
+  {% set cls = _pt_editable_cls if f.editable else _pt_readonly_cls %}
+  {% set ed_attr = 'true' if f.editable else 'false' %}
   {% if f.kind == 'textarea' %}
-    <textarea name="{{ f.key }}" rows="3" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">{{ f.value }}</textarea>
+    <textarea name="{{ f.key }}" rows="3" data-pt-editable="{{ ed_attr }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">{{ f.value }}</textarea>
   {% elif f.kind == 'number' %}
-    <input type="text" inputmode="decimal" name="{{ f.key }}" value="{{ f.value }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }} tabular-nums" />
+    <input type="text" inputmode="decimal" name="{{ f.key }}" value="{{ f.value }}" data-pt-editable="{{ ed_attr }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }} tabular-nums" />
   {% elif f.kind == 'select' %}
-    <select name="{{ f.key }}" aria-label="{{ f.label }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
+    <select name="{{ f.key }}" aria-label="{{ f.label }}" data-pt-editable="{{ ed_attr }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
       {% if f.clearable %}<option value="" {% if not f.value %}selected{% endif %}>— Not set —</option>{% endif %}
       {% if f.value and not f.value_in_options %}<option value="{{ f.value }}" selected>{{ f.value }} (current — not a Zoho option)</option>{% endif %}
       {% for opt in f.options %}<option value="{{ opt }}" {% if opt == f.value %}selected{% endif %}>{{ opt }}</option>{% endfor %}
     </select>
   {% elif f.kind == 'category' %}
-    <select name="{{ f.key }}" aria-label="{{ f.label }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
+    <select name="{{ f.key }}" aria-label="{{ f.label }}" data-pt-editable="{{ ed_attr }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}">
       {% if f.value and not f.value_in_options %}<option value="{{ f.value }}" selected>Current category (unlisted)</option>{% endif %}
       {% for c in f.category_options %}<option value="{{ c.category_id }}" {% if (c.category_id|string) == f.value %}selected{% endif %}>{{ '— ' * (c.depth or 0) }}{{ c.name }}</option>{% endfor %}
     </select>
   {% else %}
-    <input type="text" name="{{ f.key }}" value="{{ f.value }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}" />
+    <input type="text" name="{{ f.key }}" value="{{ f.value }}" data-pt-editable="{{ ed_attr }}" {{ '' if f.editable else 'disabled' }} class="{{ cls }}" />
   {% endif %}
   {% if f.editable %}<input type="hidden" name="{{ f.key }}__orig" value="{{ f.original }}" />{% endif %}
 {% endmacro %}
@@ -140,46 +146,61 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label class="block">
             <span class="text-xs text-stone-500">Material code <span class="text-stone-400">(optional)</span></span>
-            <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm font-mono focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="material_code" value="{{ it.material_code or '' }}" maxlength="120"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} font-mono" />
             <span class="mt-1 block text-[11px] text-stone-400">PackTrack-owned internal code. Never sent to Zoho.</span>
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Vendor</span>
             {% if it.zoho_item_id %}
               <input value="{{ it.vendor or '—' }}" disabled
-                     class="mt-1 w-full rounded-lg border-stone-200 bg-stone-50 text-sm text-stone-500 cursor-not-allowed" />
+                     data-pt-editable="false"
+                     class="{{ _pt_readonly_cls }}" />
               <span class="mt-1 block text-[11px] text-stone-400">Vendor comes from Zoho and is read-only here.</span>
             {% else %}
-              <input name="vendor" value="{{ it.vendor or '' }}" maxlength="200" {{ '' if can_edit else 'disabled' }}
-                     class="mt-1 w-full rounded-lg text-sm focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+              <input name="vendor" value="{{ it.vendor or '' }}" maxlength="200"
+                     data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                     {{ '' if can_edit else 'disabled' }}
+                     class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }}" />
               <span class="mt-1 block text-[11px] text-stone-400">Local-only item · vendor saved in PackTrack.</span>
             {% endif %}
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Daily usage rate</span>
-            <input name="daily_usage_rate" type="number" step="0.01" min="0" value="{{ it.daily_usage_rate }}" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="daily_usage_rate" type="number" step="0.01" min="0" value="{{ it.daily_usage_rate }}"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} tabular-nums" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Reorder point</span>
-            <input name="reorder_point" type="number" step="1" min="0" value="{{ it.reorder_point|int }}" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="reorder_point" type="number" step="1" min="0" value="{{ it.reorder_point|int }}"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} tabular-nums" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Critical point</span>
-            <input name="critical_point" type="number" step="1" min="0" value="{{ it.critical_point|int }}" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="critical_point" type="number" step="1" min="0" value="{{ it.critical_point|int }}"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} tabular-nums" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Sea lead days</span>
-            <input name="sea_lead_days" type="number" step="1" min="0" value="{{ it.sea_lead_days }}" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="sea_lead_days" type="number" step="1" min="0" value="{{ it.sea_lead_days }}"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} tabular-nums" />
           </label>
           <label class="block">
             <span class="text-xs text-stone-500">Express lead days</span>
-            <input name="express_lead_days" type="number" step="1" min="0" value="{{ it.express_lead_days }}" {{ '' if can_edit else 'disabled' }}
-                   class="mt-1 w-full rounded-lg text-sm tabular-nums focus:border-stone-500 focus:ring-0 {{ 'border-stone-300' if can_edit else 'border-stone-200 bg-stone-50 text-stone-500 cursor-not-allowed' }}" />
+            <input name="express_lead_days" type="number" step="1" min="0" value="{{ it.express_lead_days }}"
+                   data-pt-editable="{{ 'true' if can_edit else 'false' }}"
+                   {{ '' if can_edit else 'disabled' }}
+                   class="{{ _pt_editable_cls if can_edit else _pt_readonly_cls }} tabular-nums" />
           </label>
         </div>
       </section>
