@@ -24,6 +24,20 @@
      tone="info",
 ) }}
 
+{# ── v2.17.1 — How to resolve exceptions ─────────────────────────── #}
+<details class="bg-white border border-stone-200 rounded-2xl shadow-sm mt-3 mb-5 text-sm"
+         data-testid="reconciliation-how-to-resolve">
+  <summary class="px-5 py-3 cursor-pointer font-medium text-stone-700 hover:bg-stone-50 rounded-2xl select-none">
+    How to resolve exceptions
+  </summary>
+  <ul class="px-8 pb-4 pt-1 space-y-1.5 text-stone-600 text-[13px] list-disc">
+    <li>Use <strong>Adjust quantity</strong> or <strong>Cycle count</strong> to change PackTrack stock — never edit Zoho stock to "fix" a variance here.</li>
+    <li>Use <strong>Retry sync</strong> only for failed Zoho pushes that are not already reversed/blocked by the v2.16.3 safety gate.</li>
+    <li>Do <em>not</em> manually edit Zoho stock unless you are deliberately reconciling outside PackTrack (and the operations runbook covers that scenario).</li>
+    <li>Zoho-snapshot variance is a <em>signal</em> for review — never an automatic correction. PackTrack remains the source of truth for packaging counts.</li>
+  </ul>
+</details>
+
 {# ── Summary cards ────────────────────────────────────────────────── #}
 <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 mt-5 mb-5"
      data-testid="reconciliation-summary">
@@ -134,6 +148,7 @@
             <th class="text-right font-semibold px-4 py-2">Zoho snapshot</th>
             <th class="text-right font-semibold px-4 py-2">Δ</th>
             <th class="text-left font-semibold px-4 py-2">Status</th>
+            <th class="text-left font-semibold px-4 py-2">Next step</th>
             <th class="text-left font-semibold px-4 py-2">Snapshot at</th>
             <th class="text-right font-semibold px-4 py-2">Actions</th>
           </tr>
@@ -165,6 +180,10 @@
                 {% else %}
                   {{ ui.status_badge(variance_labels[r.status], tone="ok", size="sm") }}
                 {% endif %}
+              </td>
+              <td class="px-4 py-2 text-[12px] text-stone-600"
+                  data-testid="reconciliation-variance-action-{{ r.item_id }}">
+                {{ r.recommended_action }}
               </td>
               <td class="px-4 py-2 text-[11px] text-stone-500 whitespace-nowrap">
                 {% if r.snapshot_at %}{{ r.snapshot_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}
@@ -209,6 +228,7 @@
             <th class="text-left font-semibold px-4 py-2">Last snapshot</th>
             <th class="text-left font-semibold px-4 py-2">Zoho item id</th>
             <th class="text-left font-semibold px-4 py-2">Status</th>
+            <th class="text-left font-semibold px-4 py-2">Next step</th>
             <th class="text-right font-semibold px-4 py-2">Actions</th>
           </tr>
         </thead>
@@ -235,6 +255,10 @@
                 {% else %}
                   {{ ui.status_badge(stale_labels[r.status], tone="warn", size="sm") }}
                 {% endif %}
+              </td>
+              <td class="px-4 py-2 text-[12px] text-stone-600"
+                  data-testid="reconciliation-stale-action-{{ r.item_id }}">
+                {{ r.recommended_action }}
               </td>
               <td class="px-4 py-2 text-right whitespace-nowrap">
                 <a href="/inventory/{{ r.item_id }}" class="text-[11px] text-stone-500 hover:text-stone-900 underline decoration-stone-300 hover:decoration-stone-900">Review</a>
@@ -275,6 +299,7 @@
             <th class="text-left font-semibold px-4 py-2">Reason</th>
             <th class="text-left font-semibold px-4 py-2">Sync</th>
             <th class="text-left font-semibold px-4 py-2">Eligibility</th>
+            <th class="text-left font-semibold px-4 py-2">Next step</th>
             <th class="text-right font-semibold px-4 py-2">Action</th>
           </tr>
         </thead>
@@ -318,6 +343,10 @@
                 {% else %}
                   <span class="text-stone-500 italic" title="{{ r.eligibility.detail }}">{{ r.eligibility.detail }}</span>
                 {% endif %}
+              </td>
+              <td class="px-4 py-2 text-[12px] text-stone-600"
+                  data-testid="reconciliation-exception-action-{{ r.adjustment_id }}">
+                {{ r.recommended_action }}
               </td>
               <td class="px-4 py-2 text-right whitespace-nowrap">
                 {% if is_owner and r.eligibility.allowed %}

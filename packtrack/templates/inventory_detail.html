@@ -395,6 +395,18 @@
           <p class="text-[10px] text-stone-400 mt-1">
             Zoho stock is read-only here; record an adjustment to change PackTrack stock.
           </p>
+          {# v2.17.1 — subtle cross-link to the reconciliation dashboard,
+             pre-filtered by this item's material code (falls back to SKU,
+             then name) so the operator lands on a useful filtered view.
+             Only renders when there's an actual variance to investigate. #}
+          {% if zoho_stock_variance is not none and zoho_stock_variance != 0 %}
+            {% set _recon_q = it.material_code or it.sku_code or it.name %}
+            <a href="/inventory/reconciliation?q={{ _recon_q|urlencode }}"
+               data-testid="item-detail-review-reconciliation"
+               class="mt-2 inline-block text-[11px] text-stone-500 hover:text-stone-900 underline decoration-stone-300 hover:decoration-stone-900">
+              Review reconciliation →
+            </a>
+          {% endif %}
         </div>
       {% endif %}
 
