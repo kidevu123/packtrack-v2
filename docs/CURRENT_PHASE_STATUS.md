@@ -1,6 +1,37 @@
 # Current Phase Status
 
-## v2.17.1 — Reconciliation dashboard: guided operator actions (feature branch, NOT yet deployed)
+## v2.18.0 — Cycle-count sheet export + count-entry polish (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/cycle-count-sheet-v2.18.0` (off `origin/main`). |
+| **Alembic head** | `i5j6k7l8m9n0` (unchanged). **No schema change.** |
+| **Status** | Code complete; tests green (617 passed; +30 new); ruff clean; alembic single head; **not merged, not deployed, not tagged**. |
+| **Operator workflow feature** | New owner-only CSV export route + print-friendly form + count-entry polish. No schema change. No new mutation surface. No direct Zoho call. Minor bump because it adds a new operator-facing surface. |
+
+**Why this release** — operators need a practical way to perform a physical count: generate a sheet, walk the warehouse, write counts, then enter back into PackTrack. Before v2.18.0 the cycle-count page was the only entry surface — there was no exportable sheet and no print-friendly layout. v2.18.0 adds CSV export, print mode, and a handful of count-entry polish improvements without changing the mutation contract.
+
+**v2.18.0 scope**
+
+* **New route** — `GET /inventory/cycle-count.csv` (owner-only). Returns the count sheet as a CSV download with `Content-Disposition: attachment; filename="cycle-count.csv"`. Mirrors the form's filter contract (`q` substring across name/material_code/sku; `product_line` exact match). Strictly read-only — no DB writes, no Zoho calls.
+* **Locked column whitelist** (`services.cycle_count.COUNT_SHEET_COLUMNS`): `item_id, item_name, material_code, sku_code, vendor, product_line, current_packtrack_qty, zoho_snapshot_qty, zoho_variance, counted_qty, notes`. **Sensitive fields explicitly excluded**: cost, price, selling/purchase/inventory accounts, tokens, sync errors, vendor IDs. A test (`test_csv_excludes_sensitive_fields`) defends the boundary by scanning the header for forbidden substrings.
+* **Decimal-safe CSV formatting** — `_format_decimal` normalizes Decimals via `Decimal.normalize()` then `format(..., "f")` so trailing zeros are stripped (`Decimal('42.0000')` → `42`, `Decimal('42.5000')` → `42.5`). None values render as empty cells. csv.QUOTE_MINIMAL handles names/vendors with commas.
+* **Two new template buttons** in the page header secondary nav: "Export CSV" (links to the new route) and "Print sheet" (calls `window.print()`).
+* **Print stylesheet** — `@media print` block that hides nav/footer/filter/toggle/submit/computed columns and leaves a clean table (Item · Code · Current PT · blank Counted · Notes) for handwritten counts. Uses class markers `cc-print-hide`, `cc-counted-cell`, `cc-note-cell` to keep the CSS easy to audit. Test verifies each marker is present in the rendered template.
+* **Product-line filter** — new dropdown on the cycle-count page (server-passed `product_lines` distinct list, client-side filter); pairs with the existing live name/code search.
+* **"Show only rows with counts entered" toggle** — pure client-side checkbox that hides every row whose counted input is blank. Useful for reviewing pre-submit.
+* **Live pre-submit summary** — `data-testid="cycle-count-submit-summary"`. As the operator types counts, the summary updates with `"N variances will create adjustments, M zero-variance rows will be skipped"`. Computed client-side; never queries the server.
+* **Entry preservation contract** (v2.14.0 contract re-asserted) — when validation fails, every typed `counted_<id>` + `note_<id>` value is preserved in the re-rendered form. Verified by `test_entered_counts_preserved_after_validation_error`.
+
+**Tests (+30 cases in `tests/test_v2_18_0_cycle_count_sheet.py`)** — 7 service-builder cases (filters, snapshot handling, blank-by-default columns); 7 CSV-formatter cases (locked whitelist + header + Decimal formatting + None handling + comma quoting); 2 sensitive-field exclusion tests (header scan + body defense); 1 product-lines helper; 4 route tests (owner can / non-owner cannot / q + product_line filters); 1 read-only invariant (CSV export 3× → stock + snapshot byte-identical); 7 template tests (Export link, Print button, print-stylesheet markers, only-counted toggle, summary, product-line dropdown); 1 preservation contract; 1 import-surface defense (no Zoho/OAuth import in touched modules).
+
+**Not implemented** — the optional CSV upload preview route (`GET /inventory/cycle-count/import` + `POST .../preview`) per spec's "do not overbuild" guidance. Documented here as the next step. Would be a separate read-only route that parses an uploaded CSV, matches `item_id` (or `material_code`/`sku_code` fallback), and previews the would-be variances. No mutation; the operator would still submit through the existing cycle-count form to create adjustments.
+
+**Hard contract preserved.** No business-logic change beyond adding a read-only export surface and the entry-polish controls. No schema change — single Alembic head still `i5j6k7l8m9n0`. No mutation surface on the new route. CSV export never calls Zoho. `services/inventory_adjustments.py` (creator), `services/inventory_adjustment_sync.py` (orchestrator), `services/cycle_count.submit_cycle_count` (mutation path) all unchanged. No Receiving file touched. v2.9.0/v2.10.0/v2.11.0/v2.12.0/v2.14.0/v2.15.0/v2.16.0/v2.16.1/v2.16.2/v2.16.3/v2.17.0/v2.17.1 contracts intact.
+
+---
+
+## v2.17.1 — Reconciliation dashboard: guided operator actions (deployed + tagged via merge into main)
 
 | | |
 |---|---|
