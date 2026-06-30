@@ -116,6 +116,22 @@ def receiving_list(
                     name = line_vendor.strip()
         vendor_for[zoho_po_id] = name or "Vendor unknown"
 
+    # v2.13.0 launch-readiness diagnostic — pure read, one report per
+    # mirror. Surfaced on each card as a "Ready for vNext" or
+    # "Needs attention" pill so operators can fix upstream issues
+    # before clicking Start Receive. Does NOT gate Start Receive.
+    from packtrack.services.receiving_launch_readiness import assess_po_readiness
+    readiness_for: dict[str, object] = {}
+    for m in mirrors:
+        zoho_po_id = m.zoho_purchaseorder_id
+        if not zoho_po_id:
+            continue
+        readiness_for[zoho_po_id] = assess_po_readiness(
+            session, m,
+            linked_po=linked.get(zoho_po_id),
+            vendor_label=vendor_for.get(zoho_po_id),
+        )
+
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "receiving_list.html",
@@ -123,6 +139,7 @@ def receiving_list(
             "user": user, "mirrors": mirrors, "linked": linked,
             "vnext_enabled": settings.RECEIVING_VNEXT_ENABLED,
             "vendor_for": vendor_for,
+            "readiness_for": readiness_for,
         },
     )
 

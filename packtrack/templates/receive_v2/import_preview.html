@@ -24,9 +24,22 @@
 {% else %}
   {% set ready_count = report.ready_rows|length %}
   {% set skipped_count = report.skipped_rows|length %}
-  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-    {{ ui.summary_card(label="Ready to import", value=ready_count, tone="ok") }}
-    {{ ui.summary_card(label="Will be skipped", value=skipped_count, tone="warn" if skipped_count else "neutral") }}
+  {% set counts = report.counts_by_status %}
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5"
+       data-testid="import-preview-summary">
+    {{ ui.summary_card(label="Ready", value=counts.get('ready', 0), tone="ok") }}
+    {{ ui.summary_card(label="Unmatched",
+                       value=counts.get('unmatched', 0),
+                       tone="warn" if counts.get('unmatched', 0) else "neutral") }}
+    {{ ui.summary_card(label="Ambiguous",
+                       value=counts.get('ambiguous', 0),
+                       tone="warn" if counts.get('ambiguous', 0) else "neutral") }}
+    {{ ui.summary_card(label="Invalid qty",
+                       value=counts.get('invalid_qty', 0),
+                       tone="danger" if counts.get('invalid_qty', 0) else "neutral") }}
+    {{ ui.summary_card(label="Invalid",
+                       value=counts.get('invalid', 0),
+                       tone="danger" if counts.get('invalid', 0) else "neutral") }}
     {{ ui.summary_card(label="Total parsed", value=report.rows|length, tone="neutral") }}
   </div>
 
@@ -69,6 +82,23 @@
               {% endif %}
               {% if r.note %}
                 <div class="text-[11px] text-stone-500">{{ r.note }}</div>
+              {% endif %}
+              {# v2.13.0 — suggestion list for UNMATCHED / AMBIGUOUS rows.
+                 Helps the operator spot a typo or pick the right item
+                 without leaving the page. No fuzzy library — these are
+                 deterministic substring matches against the PO's items. #}
+              {% if r.suggestions %}
+                <div class="mt-1 text-[10px] text-stone-500"
+                     data-testid="import-row-suggestions-{{ r.line_no }}">
+                  Did you mean:
+                  <ul class="inline">
+                    {% for sid, slabel in r.suggestions %}
+                      <li class="inline">
+                        <span class="font-mono">{{ slabel }}</span>{% if not loop.last %};{% endif %}
+                      </li>
+                    {% endfor %}
+                  </ul>
+                </div>
               {% endif %}
             </td>
             <td class="py-1.5 text-stone-500">{{ r.vendor_case_number or '—' }}</td>

@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlmodel import Session
 
 from packtrack.config import settings
@@ -1183,11 +1183,25 @@ def _read_import_text(
     if upload is not None and upload.filename:
         ext = upload.filename.rsplit(".", 1)[-1].lower() if "." in upload.filename else ""
         if ext not in ("csv", "txt", "tsv"):
+            # XLSX explicitly called out — that's the most common case
+            # (operators export from spreadsheet apps). v2.13.0 keeps
+            # XLSX unsupported because the runtime carries no XLSX
+            # library; "Save As CSV" from Excel/Numbers/Sheets is the
+            # one-click workaround.
+            if ext in ("xlsx", "xls", "xlsm", "xlsb"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "XLSX is not supported yet. In Excel / Numbers / Google Sheets, "
+                        "use File → Save As → CSV (UTF-8) and upload that file. "
+                        "Alternatively, copy/paste the rows directly into the textarea."
+                    ),
+                )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     f"Upload must be a .csv, .tsv, or .txt file (got {ext!r}). "
-                    "XLSX import is not supported in v2.7.6."
+                    "Spreadsheet exports: use File → Save As → CSV."
                 ),
             )
         raw = upload.file.read(_MAX_IMPORT_BYTES + 1)
@@ -1337,3 +1351,89 @@ def commit_expected_lines_import(
 
 def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Downloadable CSV template (v2.13.0)
+# ---------------------------------------------------------------------------
+#
+# One-click "give me a CSV that already has the right headers, pre-populated
+# with this PO's items so I can just fill in quantities." Operators export
+# from Excel/Numbers/Sheets as CSV; the template gets them most of the way
+# there without typing material codes.
+
+
+@router.get(
+    "/{receive_id}/expected-lines/import/template.csv",
+    response_class=Response,
+)
+def download_expected_lines_template(
+    receive_id: int,
+    user: User = Depends(require_user),
+    session: Session = Depends(get_session),
+    _flag: None = Depends(_require_vnext_flag),
+):
+    """Pre-populated CSV template scoped to the receive's PO items.
+
+    OWNER + RECEIVING. Pure read — no DB mutation. Returns one row per
+    distinct item on the PO so the operator only fills in quantities,
+    case numbers, and notes. Empty PO (or no PO link) returns a
+    headers-only template so the operator can still draft by hand.
+    """
+    import csv
+    import io as _io
+
+    from packtrack.services.receiving_v2 import po_item_choices
+
+    _require_receiving_or_owner(user)
+    rec = _load_receive(session, receive_id)
+
+    buf = _io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    headers = [
+        "material_code", "item", "quantity", "unit",
+        "vendor_case_number", "note",
+    ]
+    writer.writerow(headers)
+
+    if rec.purchase_order_id is not None:
+        po = session.get(PurchaseOrder, rec.purchase_order_id)
+        if po is not None:
+            # One template row per distinct PO item. We pull Items directly
+            # rather than relying on po_item_choices (which returns labels)
+            # so the CSV gets clean field values.
+            from sqlmodel import select as _select
+            items = session.exec(
+                _select(Item)
+                .join(POLine, POLine.item_id == Item.id)
+                .where(POLine.po_id == po.id)
+                .order_by(Item.name)
+            ).all()
+            seen: set[int] = set()
+            for it in items:
+                if it.id in seen:
+                    continue
+                seen.add(it.id)
+                writer.writerow([
+                    it.material_code or "",
+                    it.name or "",
+                    "",  # quantity — operator fills in
+                    it.unit or "",
+                    "",  # vendor_case_number
+                    "",  # note
+                ])
+            # Reference po_item_choices so its presence is documented but
+            # not loaded — the helper builds richer labels we don't want
+            # in a raw CSV. The import keeps using the deterministic
+            # matcher (material_code → sku → name) against these same items.
+            _ = po_item_choices
+
+    filename = f"{rec.receive_number}-packing-list-template.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
