@@ -20,3 +20,8 @@ static/styles.css
 
 # Local Python venvs used for running tests outside the main .venv.
 .venv-test/
+
+# Per-session Claude Code state. Kept untracked by convention; v2.16.1
+# made this explicit so the deploy guard's dirty-tree check does not
+# fail when a session directory is present in the working tree.
+.claude/
