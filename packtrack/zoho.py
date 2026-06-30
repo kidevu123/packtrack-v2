@@ -191,21 +191,37 @@ def _reorder_level(d: dict) -> float | None:
     return None
 
 
-def _apply_item_sync_fields(record: Item, raw: dict) -> None:
+def _apply_item_sync_fields(record: Item, raw: dict, *, is_new: bool = False) -> None:
     """Apply one Zoho item payload onto an ``Item`` record (mutates in place).
+
+    Stock ownership (v2.11.0): PackTrack is the operational source of
+    truth for packaging counts. The inbound Zoho item sync NEVER
+    overwrites ``current_stock`` on an existing item — it records the
+    upstream value as a snapshot (``last_zoho_stock_snapshot`` +
+    ``last_zoho_stock_snapshot_at``) for reconciliation only. The
+    ``is_new`` flag (set by the caller when this is the very first
+    insert for a previously-unknown ``zoho_item_id``) allows a one-time
+    seed of ``current_stock`` from Zoho so a brand-new SKU shows the
+    right opening number. See ``services/inventory_stock_policy`` for
+    the full allowlist + rationale.
 
     Loop / honesty protection: when an owner has edited a Zoho-owned, pushable
     field (name/description/unit) and the edit is parked ``pending`` (waiting on
     the integration service), the inbound sync must NOT revert those three —
     otherwise the UI would silently lose the edit before it syncs. ``vendor`` is
     Zoho-read-only in PackTrack (the service rejects vendor writes), so it
-    always tracks Zoho here regardless of pending state. sku_code, stock,
-    reorder level, and image always track Zoho since they are not owner-editable.
+    always tracks Zoho here regardless of pending state. sku_code, reorder
+    level, and image always track Zoho since they are not owner-editable.
 
     Outbound is only ever triggered by an explicit owner edit, never from here,
     so a sync pulling back identical values can never re-trigger an outbound
     push (no echo loop).
     """
+    from packtrack.services.inventory_stock_policy import (
+        parse_zoho_stock,
+        record_zoho_stock_snapshot,
+    )
+
     owner_edit_pending = record.zoho_push_status == "pending"
     if not owner_edit_pending:
         record.name = (raw.get("name") or "")[:240]
@@ -216,7 +232,12 @@ def _apply_item_sync_fields(record: Item, raw: dict) -> None:
     # Vendor is read-only in PackTrack → always reflect Zoho.
     record.vendor = (_vendor_name(raw) or "")[:200] or record.vendor
     record.sku_code = (raw.get("sku") or "")[:120] or None
-    record.current_stock = float(raw.get("actual_available_stock") or 0)
+    # v2.11.0 stock-ownership policy: snapshot upstream stock on every
+    # sync; only seed current_stock on the very first insert.
+    zoho_stock = parse_zoho_stock(raw)
+    record_zoho_stock_snapshot(record, zoho_stock)
+    if is_new and zoho_stock is not None:
+        record.current_stock = float(zoho_stock)
     rl = _reorder_level(raw)
     if rl is not None and not record.reorder_point_locked:
         record.reorder_point = rl
@@ -270,9 +291,10 @@ def sync_items(session: Session) -> tuple[int, int]:
             session.flush()
             created += 1
             just_created.append(record)
+            _apply_item_sync_fields(record, raw, is_new=True)
         else:
             updated += 1
-        _apply_item_sync_fields(record, raw)
+            _apply_item_sync_fields(record, raw, is_new=False)
         try:
             _sync_item_image(record, zoho_id, str(raw.get("image_id") or "") or None)
         except Exception as e:

@@ -1,6 +1,37 @@
 # Current Phase Status
 
-## v2.10.0 — Inventory adjustment → Zoho sync through zoho-integration-service v1.34.0 (feature branch, NOT yet deployed)
+## v2.11.0 — Stock ownership policy: PackTrack owns Item.current_stock; Zoho is snapshot-only (feature branch, NOT yet deployed)
+
+| | |
+|---|---|
+| **Branch** | `feature/zoho-stock-readonly-policy` (off `origin/main`, separate worktree so the master-data editor branch stays untouched). |
+| **Alembic head** | `i5j6k7l8m9n0` (advances from v2.10.0's `h4i5j6k7l8m9`). Adds two nullable columns on `items`. Additive only. |
+| **Status** | Code complete; tests green (407 passed; +25 over v2.10.0's 382); **not merged, not deployed, not tagged**. |
+
+**v2.11.0 scope** — locks the stock-ownership contract that v2.9.0/v2.10.0 implied but never structurally enforced. The inbound Zoho item sync no longer overwrites `Item.current_stock`; it records the upstream value as an informational snapshot. PackTrack adjustments (and the existing movement workflows) remain the only writers of `current_stock`.
+
+* **Audit of every `Item.current_stock` writer**, surfaced in the new `services/inventory_stock_policy` docstring:
+  * **Allowed** (movement workflows): `services/inventory_adjustments.create_adjustment` (v2.9.0 immutable ledger) · `services/consumption.apply_consumption_event` (Luma finished-lot production usage) · `routes/purchase_orders.po_receive_*` (legacy pre-vNext receive) · `zoho.sync_items` **ONLY for brand-new items on first insert** (one-time seed of the opening number)
+  * **Forbidden**: `zoho.sync_items` for existing items · any master-data edit route
+* **`_apply_item_sync_fields(record, raw, *, is_new=False)`** — new `is_new` kwarg. When `is_new=True` (caller knows this is the very first insert for an unknown `zoho_item_id`), `current_stock` is seeded from the upstream value and the snapshot is recorded. When `is_new=False` (every subsequent sync on an existing item), only the snapshot is written — `current_stock` is left alone.
+* **Two new nullable columns on `items`** (migration `i5j6k7l8m9n0`, additive):
+  * `last_zoho_stock_snapshot NUMERIC(18, 4)` — Decimal-safe, matches the v2.9.0 adjustment quantity columns
+  * `last_zoho_stock_snapshot_at TIMESTAMP` — when the snapshot was last captured
+* **New `services/inventory_stock_policy` module** holds three pure helpers + the allowlist comment block (source-of-truth for the policy):
+  * `parse_zoho_stock(raw)` — pulls the upstream stock from any of `actual_available_stock` / `available_stock` / `stock_on_hand` / `quantity` / `stock`; returns `Decimal` or `None`
+  * `record_zoho_stock_snapshot(item, raw_stock, *, now=None)` — writes the two columns; no-op when `raw_stock` is `None` (don't overwrite a prior snapshot with missing data); does not commit
+  * `zoho_stock_variance(item)` — `Decimal(packtrack - zoho)`, or `None` when no snapshot. Positive when PackTrack is higher than Zoho thinks (likely upstream stale / missed adjustment); negative when PackTrack is lower (likely upstream sale/movement we didn't see).
+* **Item-detail Stock card** gains:
+  * `PackTrack · source of truth` label below the on-hand number
+  * `Zoho snapshot · informational` block with the snapshot quantity, its timestamp, and a variance pill (`Δ +3` amber / `Δ -3` red / `in sync` emerald). Hidden entirely when no snapshot exists.
+
+**Tests (+25 cases, total 407)** in `tests/test_v2_11_0_stock_ownership.py` — existing-item sync does NOT overwrite stock (default + pending owner edit) · existing-item sync DOES populate snapshot · new-item sync seeds stock + snapshot (first insert only) · new-item with missing stock field leaves `current_stock=0` · master-data sync still works · `parse_zoho_stock` across all five field names + missing + garbage · `record_zoho_stock_snapshot` no-ops on `None` · variance positive/negative/none · item-detail page renders "PackTrack · source of truth" label · item-detail renders snapshot block when present · item-detail hides snapshot block when absent · master-data edit route still cannot write `current_stock` (regression) · inventory adjustment still updates `current_stock` (regression) · adjustment sync to integration service still works (v2.10.0 regression check) · `inventory_stock_policy` module imports no Zoho/OAuth/HTTP symbol (source-level guard) · neither new module mentions Receiving · snapshot column round-trips as `Decimal`. Plus one pre-existing test (`test_inventory_grouping::test_inbound_sync_preserves_pending_owner_edit`) updated to the new contract.
+
+**Hard contract preserved.** PackTrack still never calls Zoho directly — only `zoho-integration-service`. No Receiving file touched. Existing v2.9.0 / v2.10.0 source-level guard tests on the adjustment-service file continue to pass (no httpx / no Zoho / no OAuth import in `services/inventory_adjustments.py`). v2.8.0 WIP on `feature/inventory-masterdata-editor-v2.8.0` (`b643b4e`) untouched. Single Alembic head preserved (`i5j6k7l8m9n0`).
+
+---
+
+## v2.10.0 — Inventory adjustment → Zoho sync through zoho-integration-service v1.34.0 (deployed + tagged via merge into main)
 
 | | |
 |---|---|

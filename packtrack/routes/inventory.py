@@ -145,6 +145,11 @@ def item_detail(
     # Read-only extended Zoho detail (v2.6.0). Never raises — a service blip
     # leaves ``extended.available`` False and the local detail still renders.
     extended = build_extended_detail(item.zoho_item_id)
+    # v2.11.0 — variance between PackTrack (source of truth) and the
+    # latest Zoho stock snapshot. Displayed as an informational pill
+    # on the Stock card; does NOT alter operational behavior.
+    from packtrack.services.inventory_stock_policy import zoho_stock_variance
+    variance = zoho_stock_variance(item)
     from packtrack.main import templates
     return templates.TemplateResponse(
         request, "inventory_detail.html",
@@ -156,6 +161,7 @@ def item_detail(
             "can_edit": user.role == Role.OWNER,
             "saved": saved or "",
             "extended": extended,
+            "zoho_stock_variance": variance,
         },
     )
 

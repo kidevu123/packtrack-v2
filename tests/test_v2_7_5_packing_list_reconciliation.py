@@ -216,8 +216,9 @@ def test_alembic_head_is_v2_7_5_revision():
     # v2.9.0 advanced this from f2g3h4i5j6k7 (v2.7.5) to g3h4i5j6k7l8
     # by adding the inventory_adjustments table. v2.10.0 advanced it
     # again to h4i5j6k7l8m9 by adding the sync_warning + attempt_count
-    # columns.
-    assert heads[0] == "h4i5j6k7l8m9"
+    # columns. v2.11.0 advanced to i5j6k7l8m9n0 by adding the
+    # last_zoho_stock_snapshot columns on items.
+    assert heads[0] == "i5j6k7l8m9n0"
 
 
 def test_receive_packing_list_line_row_roundtrips(session):

@@ -132,6 +132,17 @@ class Item(SQLModel, table=True):
     description: str | None = None
     unit: str = Field(default="units", max_length=40)
     current_stock: float = 0.0
+    # v2.11.0 — Zoho stock reconciliation snapshot. PackTrack adjustments
+    # are the only allowed writer of ``current_stock`` for existing items
+    # (see services/inventory_stock_policy.py). The inbound Zoho item
+    # sync now records what Zoho reports here instead of overwriting
+    # ``current_stock``. These two columns are informational only — they
+    # never feed any operational decision; the item-detail UI surfaces
+    # the variance so an operator can investigate drift.
+    last_zoho_stock_snapshot: Decimal | None = Field(
+        default=None, sa_column=Column(Numeric(18, 4), nullable=True),
+    )
+    last_zoho_stock_snapshot_at: datetime | None = None
     daily_usage_rate: float = 0.0
     forecast_alert_sent_stock: float | None = Field(default=None)
     reorder_point: float = 0.0
